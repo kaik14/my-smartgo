@@ -3,6 +3,9 @@ import AppLayout from "./layouts/AppLayout";
 import TripsPage from "./pages/TripsPage";
 import CreateTripPage from "./pages/CreateTripPage";
 import NearbyPage from "./pages/NearbyPage";
+import ProfilePage from "./pages/ProfilePage";
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
 
 export default function App() {
   return (
@@ -13,6 +16,9 @@ export default function App() {
           <Route path="/trips" element={<TripsPage />} />
           <Route path="/create" element={<CreateTripPage />} />
           <Route path="/nearby" element={<NearbyPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

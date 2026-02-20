@@ -1,22 +1,22 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { CalendarIcon, DotIcon, SearchIcon, UserIcon } from "../components/icons";
 import { createTrip } from "../services/api";
 
 const PREFS = [
-  { key: "classic", label: "Classic Must-Dos", icon: "📍" },
-  { key: "food", label: "Food & Drink", icon: "🍽️" },
-  { key: "niche", label: "Niche Exploration", icon: "🕵️" },
-  { key: "photo", label: "Photogenic Shots", icon: "📸" },
-  { key: "shop", label: "Shopping", icon: "🛍️" },
-  { key: "walk", label: "City Walk", icon: "🚶" },
-  { key: "nature", label: "Nature Scenery", icon: "🏞️" },
-  { key: "art", label: "Art & Exhibitions", icon: "🎨" },
-  { key: "history", label: "Historical Buildings", icon: "🏛️" },
+  { key: "classic", label: "Classic Must-Dos" },
+  { key: "food", label: "Food & Drink" },
+  { key: "niche", label: "Niche Exploration" },
+  { key: "photo", label: "Photogenic Shots" },
+  { key: "shop", label: "Shopping" },
+  { key: "walk", label: "City Walk" },
+  { key: "nature", label: "Nature Scenery" },
+  { key: "art", label: "Art & Exhibitions" },
+  { key: "history", label: "Historical Buildings" },
 ];
 
 export default function CreateTripPage() {
   const navigate = useNavigate();
-
   const [destination, setDestination] = useState("Kuala Lumpur");
   const [startDate, setStartDate] = useState("2026-03-01");
   const [endDate, setEndDate] = useState("2026-03-02");
@@ -30,16 +30,14 @@ export default function CreateTripPage() {
     return `${destination} ${days}-Day Tour`;
   }, [destination, startDate, endDate]);
 
-  const toggle = (k) => {
+  const toggle = (key) => {
     const next = new Set(selected);
-    if (next.has(k)) next.delete(k);
-    else next.add(k);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
     setSelected(next);
   };
 
   const submit = async (mode) => {
-    // mode: "smart" | "self"
-    // 先做 MVP：直接创建 trip
     try {
       setLoading(true);
       await createTrip({
@@ -47,7 +45,6 @@ export default function CreateTripPage() {
         destination,
         start_date: startDate,
         end_date: endDate,
-        // preferences 你后端以后可以加字段存起来（现在先不传也行）
       });
       navigate("/trips");
     } finally {
@@ -57,17 +54,21 @@ export default function CreateTripPage() {
 
   return (
     <div>
-      <div className="row" style={{ marginTop: 6 }}>
-        <button className="iconBtn" onClick={() => navigate(-1)} aria-label="back">
-          ←
+      <div className="row createTopActions" style={{ marginTop: 6 }}>
+        <button className="iconBtn" aria-label="search">
+          <SearchIcon />
         </button>
-        <div style={{ width: 42 }} />
+        <button className="iconBtn" aria-label="profile" onClick={() => navigate("/profile")}>
+          <UserIcon />
+        </button>
       </div>
 
       <div className="h1">Where do you want to go?</div>
 
       <div className="inputWrap" style={{ marginTop: 10 }}>
-        <div className="inputIcon">🔎</div>
+        <div className="inputIcon">
+          <SearchIcon size={20} />
+        </div>
         <input
           className="input withIcon"
           value={destination}
@@ -79,18 +80,22 @@ export default function CreateTripPage() {
       <div className="sectionTitle">How long do you want to go?</div>
       <div className="stack">
         <div className="inputWrap">
-          <div className="inputIcon">📅</div>
+          <div className="inputIcon">
+            <CalendarIcon />
+          </div>
           <input
-            className="input withIcon"
+            className="input withIcon dateInput"
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
           />
         </div>
         <div className="inputWrap">
-          <div className="inputIcon">📅</div>
+          <div className="inputIcon">
+            <CalendarIcon />
+          </div>
           <input
-            className="input withIcon"
+            className="input withIcon dateInput"
             type="date"
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
@@ -100,15 +105,18 @@ export default function CreateTripPage() {
 
       <div className="sectionTitle">Travel Preferences</div>
       <div className="chips">
-        {PREFS.map((p) => (
-          <div
-            key={p.key}
-            className={`chip ${selected.has(p.key) ? "active" : ""}`}
-            onClick={() => toggle(p.key)}
+        {PREFS.map((pref) => (
+          <button
+            type="button"
+            key={pref.key}
+            className={`chip ${selected.has(pref.key) ? "active" : ""}`}
+            onClick={() => toggle(pref.key)}
           >
-            <span>{p.icon}</span>
-            <span style={{ fontSize: 13 }}>{p.label}</span>
-          </div>
+            <span className="chipIcon">
+              <DotIcon />
+            </span>
+            <span style={{ fontSize: 13 }}>{pref.label}</span>
+          </button>
         ))}
       </div>
 

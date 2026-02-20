@@ -1,47 +1,57 @@
 import { useState } from "react";
+import { ChevronDownIcon, DotIcon, LocationArrowIcon } from "../components/icons";
+
+const SPOTS = [
+  { id: 1, name: "National Art Gallery", x: "18%", y: "16%" },
+  { id: 2, name: "Petronas Twin Towers", x: "54%", y: "34%" },
+  { id: 3, name: "Aquarium KLCC", x: "45%", y: "43%" },
+  { id: 4, name: "Blackbird KL", x: "64%", y: "50%" },
+  { id: 5, name: "KL Tower Mini Zoo", x: "16%", y: "56%" },
+  { id: 6, name: "Mega Star Arena", x: "52%", y: "74%" },
+];
 
 export default function NearbyPage() {
   const [tab, setTab] = useState("all");
 
   return (
-    <div>
-      <div className="row" style={{ marginTop: 10 }}>
-        <div>
-          <div style={{ fontSize: 24, fontWeight: 900 }}>Kuala Lumpur ⌄</div>
-          <div className="muted" style={{ fontWeight: 800 }}>
-            Light Rain · 23° - 31° 🌧️
+    <div className="nearbyPage">
+      <div className="mapStage">
+        <div className="nearbyHeader">
+          <div>
+            <div className="nearbyTitle">
+              Kuala Lumpur
+              <span className="nearbyCaret">
+                <ChevronDownIcon />
+              </span>
+            </div>
+            <div className="muted nearbyWeather">Light Rain · 23° - 31°</div>
           </div>
+          <button className="iconBtn nearbyLocateBtn" aria-label="locate">
+            <LocationArrowIcon />
+          </button>
         </div>
 
-        <button className="iconBtn" aria-label="locate">📡</button>
-      </div>
-
-      <div style={{ height: 14 }} />
-
-      <div className="mapBox">
-        {/* 这里之后接 Google Maps */}
-        <div style={{ padding: 18 }} className="muted">
-          Map goes here (Google Maps).
+        <div className="mapCanvas" aria-label="map placeholder">
+          {SPOTS.map((spot) => (
+            <div key={spot.id} className="poi" style={{ left: spot.x, top: spot.y }}>
+              <div className="poiIcon">
+                <DotIcon />
+              </div>
+              <div className="poiLabel">{spot.name}</div>
+            </div>
+          ))}
         </div>
 
-        <div className="mapOverlayTop">
-          <div style={{ width: 40 }} />
-          <div className="glass" style={{ padding: "10px 14px", borderRadius: 999, fontWeight: 900 }}>
-            🌀
-          </div>
-          <button className="iconBtn" aria-label="direction">🧭</button>
-        </div>
-
-        <div className="pillGroup">
-          <div className={`pill ${tab === "all" ? "active" : ""}`} onClick={() => setTab("all")}>
-            🔥 All
-          </div>
-          <div className={`pill ${tab === "gems" ? "active" : ""}`} onClick={() => setTab("gems")}>
+        <div className="pillGroup nearbyPills">
+          <button type="button" className={`pill ${tab === "all" ? "active" : ""}`} onClick={() => setTab("all")}>
+            All
+          </button>
+          <button type="button" className={`pill ${tab === "gems" ? "active" : ""}`} onClick={() => setTab("gems")}>
             Hidden Gems
-          </div>
-          <div className={`pill ${tab === "spots" ? "active" : ""}`} onClick={() => setTab("spots")}>
+          </button>
+          <button type="button" className={`pill ${tab === "spots" ? "active" : ""}`} onClick={() => setTab("spots")}>
             Treasure Spots
-          </div>
+          </button>
         </div>
       </div>
     </div>
