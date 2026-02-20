@@ -1,0 +1,363 @@
+:root{
+  --bg: #f6f7fb;
+  --text: #0f172a;
+  --muted: #64748b;
+  --card: rgba(255,255,255,0.70);
+  --stroke: rgba(15, 23, 42, 0.08);
+  --shadow: 0 20px 60px rgba(15,23,42,0.10);
+  --shadowSoft: 0 12px 30px rgba(15,23,42,0.08);
+  --radiusXL: 28px;
+  --radiusL: 22px;
+  --radiusM: 16px;
+}
+
+*{ box-sizing: border-box; }
+html, body { height: 100%; }
+body{
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  color: var(--text);
+  background: radial-gradient(1200px 600px at 50% -10%, #eaf2ff 0%, rgba(234,242,255,0) 60%),
+              radial-gradient(900px 500px at 20% 10%, #e7fff2 0%, rgba(231,255,242,0) 55%),
+              radial-gradient(900px 500px at 80% 15%, #fff1e5 0%, rgba(255,241,229,0) 55%),
+              var(--bg);
+}
+
+a{ color: inherit; }
+
+/* App Shell: 让 mobile UI 在桌面居中显示 */
+.appShell{
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+}
+
+.container{
+  width: 100%;
+  max-width: 460px;          /* 默认按“手机屏幕”宽度 */
+  padding: 18px 16px 96px;   /* 留出底部导航空间 */
+}
+
+/* 平板稍微放大一点点 */
+@media (min-width: 640px){
+  .container{
+    max-width: 520px;
+  }
+}
+
+/* 桌面：继续保持居中，但不会贴左 */
+@media (min-width: 1024px){
+  .container{
+    max-width: 560px;
+  }
+}
+
+/* Nearby 这种需要地图的大页面：允许更宽 */
+.container.wide{
+  max-width: 980px;
+}
+@media (max-width: 1023px){
+  .container.wide{
+    max-width: 560px; /* 小屏还是别太宽 */
+  }
+}
+
+.glass{
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadowSoft);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.h1{
+  font-size: clamp(28px, 3.2vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 18px 0 10px;
+}
+
+.muted{ color: var(--muted); }
+
+.row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iconBtn{
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,0.7);
+  box-shadow: var(--shadowSoft);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.input{
+  width: 100%;
+  height: 52px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,0.75);
+  box-shadow: var(--shadowSoft);
+  padding: 0 16px;
+  outline: none;
+  font-size: 16px;
+}
+
+.inputWrap{
+  position: relative;
+  width: 100%;
+}
+
+.inputIcon{
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.65;
+}
+
+.input.withIcon{
+  padding-left: 44px;
+}
+
+.sectionTitle{
+  font-size: 18px;
+  font-weight: 800;
+  margin: 22px 0 10px;
+}
+
+.chips{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 640px){
+  .chips{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.chip{
+  height: 48px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,0.72);
+  box-shadow: var(--shadowSoft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 700;
+  color: rgba(15,23,42,0.85);
+}
+
+.chip.active{
+  background: rgba(15,23,42,0.92);
+  color: white;
+  border-color: rgba(15,23,42,0.92);
+}
+
+.primaryBtn{
+  height: 56px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(15,23,42,0.95);
+  color: white;
+  font-weight: 800;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.secondaryBtn{
+  height: 56px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,0.75);
+  color: var(--text);
+  font-weight: 800;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: var(--shadowSoft);
+}
+
+.stack{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bottomNav{
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18px;
+  width: min(520px, calc(100% - 24px));
+  height: 74px;
+  border-radius: 24px;
+  padding: 10px 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,255,255,0.75);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.navItem{
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: rgba(15,23,42,0.75);
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.navItem.active{
+  color: rgba(15,23,42,1);
+}
+
+.plusBtn{
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  border: none;
+  background: rgba(15,23,42,0.95);
+  color: white;
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+/* Trip Card (渐变 + 倾斜图片) */
+.tripCard{
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radiusXL);
+  padding: 18px 18px 18px 18px;
+  border: 1px solid rgba(255,255,255,0.6);
+  box-shadow: var(--shadowSoft);
+  background: linear-gradient(135deg, rgba(233,240,255,0.9) 0%, rgba(255,255,255,0.55) 45%, rgba(255,255,255,0.35) 100%);
+}
+
+.tripCard.green{
+  background: linear-gradient(135deg, rgba(217,255,236,0.9) 0%, rgba(255,255,255,0.55) 45%, rgba(255,255,255,0.35) 100%);
+}
+.tripCard.mint{
+  background: linear-gradient(135deg, rgba(215,250,255,0.9) 0%, rgba(255,255,255,0.55) 45%, rgba(255,255,255,0.35) 100%);
+}
+.tripCard.peach{
+  background: linear-gradient(135deg, rgba(255,234,212,0.95) 0%, rgba(255,255,255,0.55) 45%, rgba(255,255,255,0.35) 100%);
+}
+
+.tripTitle{
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  margin: 6px 0 10px;
+}
+
+.tripMeta{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 700;
+  color: rgba(15,23,42,0.70);
+}
+
+.tripMeta .line{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tripMeta .bar{
+  width: 4px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(15,23,42,0.15);
+}
+
+.tripImg{
+  position: absolute;
+  right: -22px;
+  bottom: -18px;
+  width: 160px;
+  height: 110px;
+  border-radius: 22px;
+  transform: rotate(-10deg);
+  background: rgba(255,255,255,0.55);
+  border: 1px solid rgba(255,255,255,0.7);
+  box-shadow: var(--shadowSoft);
+  overflow: hidden;
+}
+
+.tripImg img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Map area placeholder */
+.mapBox{
+  height: min(68vh, 720px);
+  border-radius: 28px;
+  overflow: hidden;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,0.55);
+  box-shadow: var(--shadowSoft);
+  position: relative;
+}
+
+.mapOverlayTop{
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pillGroup{
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 16px;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.78);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadowSoft);
+}
+.pill{
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-weight: 900;
+  cursor: pointer;
+  color: rgba(15,23,42,0.75);
+}
+.pill.active{
+  background: rgba(15,23,42,0.92);
+  color: white;
+}
+
+.stack{ width: 100%; }
+.tripCard{ width: 100%; }
+.mapBox{ width: 100%; }
