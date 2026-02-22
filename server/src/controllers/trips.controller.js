@@ -106,7 +106,7 @@ export async function updateTrip(req, res) {
 
 export async function getTripDetail(req, res) {
   try {
-    const tripId = Number(req.params.trip_id);
+    const tripId = Number(req.params.tripId ?? req.params.trip_id);
     if (!Number.isInteger(tripId) || tripId <= 0) {
       return res.status(400).json({ error: "Invalid trip_id" });
     }
@@ -119,6 +119,7 @@ export async function getTripDetail(req, res) {
         t.destination,
         t.start_date,
         t.end_date,
+        t.description AS trip_description,
         t.note AS trip_note,
         d.day_id,
         d.day_number,
@@ -155,6 +156,7 @@ export async function getTripDetail(req, res) {
       destination: first.destination,
       start_date: first.start_date,
       end_date: first.end_date,
+      description: first.trip_description,
       note: first.trip_note,
       days: [],
     };

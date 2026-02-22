@@ -1,8 +1,9 @@
 import express from "express";
-import { updateDayPoiNote } from "../controllers/day-pois.controller.js";
+import { updateDayPoiNote, updateDayPoiSchedule } from "../controllers/day-pois.controller.js";
 
 const router = express.Router();
 
-router.patch("/day-pois/:day_poi_id", updateDayPoiNote);
+router.patch("/day-pois/:dayPoiId", updateDayPoiNote);
+router.patch("/day-pois/:dayPoiId/schedule", updateDayPoiSchedule);
 
 export default router;

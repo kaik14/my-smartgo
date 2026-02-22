@@ -64,6 +64,15 @@ export function ChevronDownIcon({ size = 18 }) {
   );
 }
 
+export function ArrowLeftIcon({ size = 20 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true">
+      <path d="M15 5 8 12l7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 12h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function DotIcon({ size = 8 }) {
   return (
     <svg viewBox="0 0 8 8" width={size} height={size} fill="currentColor" aria-hidden="true">

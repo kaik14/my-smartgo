@@ -477,12 +477,12 @@ a {
 }
 
 .nearbyPage {
-  margin: -18px -16px 0;
+  margin: -18px -16px -130px;
 }
 
 .mapStage {
   position: relative;
-  min-height: calc(100vh - 150px);
+  min-height: calc(100vh - 8px);
   border-radius: 0;
   overflow: hidden;
   background: #eef1f6;
@@ -531,7 +531,7 @@ a {
 
 .mapCanvas {
   position: relative;
-  min-height: calc(100vh - 150px);
+  min-height: calc(100vh - 8px);
   background:
     radial-gradient(1000px 500px at 20% 0%, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0)),
     linear-gradient(180deg, #eceef2 0%, #e5e8ed 100%);
@@ -578,12 +578,31 @@ a {
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
 }
 
-.nearbyPills {
-  bottom: 106px;
+.pillGroup.nearbyPills {
+  left: 16px;
+  right: 16px;
+  transform: none;
+  bottom: calc(14px + env(safe-area-inset-bottom) + 74px + 14px);
   z-index: 4;
-  width: calc(100% - 32px);
-  max-width: 430px;
-  justify-content: center;
+  width: auto;
+  max-width: none;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.nearbyPills .pill {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  padding: 12px 10px;
+  font-size: 14px;
 }
 
 .mapOverlayTop {
@@ -752,7 +771,7 @@ a {
   }
 
   .nearbyPage {
-    margin: -22px -20px 0;
+    margin: -22px -20px -136px;
   }
 
   .nearbyTitle {
@@ -762,6 +781,6 @@ a {
 
 @media (min-width: 1200px) {
   .nearbyPage {
-    margin: -28px -24px 0;
+    margin: -28px -24px -140px;
   }
 }

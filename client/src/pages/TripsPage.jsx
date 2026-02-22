@@ -44,7 +44,14 @@ export default function TripsPage() {
           trips.map((trip, idx) => {
             const variants = ["mint", "green", "peach", ""];
             const variant = variants[idx % variants.length];
-            return <TripCard key={trip.trip_id} trip={trip} variant={variant} />;
+            return (
+              <TripCard
+                key={trip.trip_id}
+                trip={trip}
+                variant={variant}
+                onClick={() => navigate(`/trips/${trip.trip_id}`)}
+              />
+            );
           })
         )}
       </div>

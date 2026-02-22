@@ -14,6 +14,7 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const isWide = location.pathname.startsWith("/nearby");
+  const hideBottomNav = location.pathname.startsWith("/profile");
 
   return (
     <>
@@ -23,15 +24,17 @@ export default function AppLayout() {
         </div>
       </div>
 
-      <div className="bottomNav">
-        <NavItem to="/trips" label="Itinerary" icon={<SuitcaseIcon />} />
+      {!hideBottomNav ? (
+        <div className="bottomNav">
+          <NavItem to="/trips" label="Itinerary" icon={<SuitcaseIcon />} />
 
-        <button className="plusBtn" onClick={() => navigate("/create")} aria-label="Create trip">
-          <span style={{ fontSize: 24, fontWeight: 900 }}>+</span>
-        </button>
+          <button className="plusBtn" onClick={() => navigate("/create")} aria-label="Create trip">
+            <span style={{ fontSize: 24, fontWeight: 900 }}>+</span>
+          </button>
 
-        <NavItem to="/nearby" label="Nearby" icon={<PinIcon />} />
-      </div>
+          <NavItem to="/nearby" label="Nearby" icon={<PinIcon />} />
+        </div>
+      ) : null}
     </>
   );
 }

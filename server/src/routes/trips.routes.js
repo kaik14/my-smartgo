@@ -5,7 +5,7 @@ const router = express.Router();
 
 router.post("/trips", createTrip);
 router.get("/trips", getTrips);
-router.get("/trips/:trip_id", getTripDetail);
-router.patch("/trips/:trip_id", updateTrip);
+router.get("/trips/:tripId", getTripDetail);
+router.patch("/trips/:tripId", updateTrip);
 
 export default router;

@@ -55,6 +55,16 @@ export const createTrip = async (payload) => {
   return res.data;
 };
 
+export const getTripDetail = async (tripId) => {
+  const res = await api.get(`/trips/${tripId}`);
+  return res.data;
+};
+
+export const patchDayPoiNote = async (dayPoiId, note) => {
+  const res = await api.patch(`/day-pois/${dayPoiId}`, { note });
+  return res.data;
+};
+
 export const clearGuestTrips = () => {
   guestTrips = [];
 };

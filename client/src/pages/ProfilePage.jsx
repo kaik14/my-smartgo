@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { ArrowLeftIcon } from "../components/icons";
 import { clearGuestTrips } from "../services/api";
 
 const FAVORITE_POIS_PLACEHOLDER = [
@@ -30,9 +31,28 @@ export default function ProfilePage() {
     navigate("/login");
   };
 
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate("/trips");
+  };
+
   return (
     <div>
-      <div className="h1" style={{ marginBottom: 4 }}>Profile</div>
+      <div className="row" style={{ marginTop: 8, alignItems: "flex-start" }}>
+        <div className="h1" style={{ marginBottom: 4, marginTop: 0 }}>Profile</div>
+        <button
+          type="button"
+          className="iconBtn"
+          aria-label="Back"
+          onClick={handleBack}
+          title="Back"
+        >
+          <ArrowLeftIcon />
+        </button>
+      </div>
       <div className="muted">Your account and saved places</div>
 
       <div className="glass profileCard" style={{ marginTop: 16 }}>
