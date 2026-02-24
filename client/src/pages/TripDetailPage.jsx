@@ -1,14 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import { getTripDetail, patchDayPoiNote } from "../services/api";
+import { deleteTrip, generateAiTripItinerary, getTripDetail, patchDayPoiNote } from "../services/api";
 
 function formatDateRange(startDate, endDate) {
   if (!startDate || !endDate) return "";
   const start = new Date(startDate);
   const end = new Date(endDate);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return `${startDate} - ${endDate}`;
   return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
+}
+
+function formatDayFromTripStart(startDate, dayNumber) {
+  if (!startDate) return "";
+  const base = new Date(`${startDate}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return "";
+  base.setDate(base.getDate() + Math.max(0, Number(dayNumber || 1) - 1));
+  return base.toLocaleDateString();
+}
+
+function preferencesToText(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).join(", ");
+  if (typeof value === "string") return value;
+  return "";
 }
 
 const DEFAULT_MAP_CENTER = { lat: 3.139, lng: 101.6869 };
@@ -19,11 +33,9 @@ function loadGoogleMapsApi(apiKey) {
   if (typeof window === "undefined") {
     return Promise.reject(new Error("Window is not available"));
   }
-
   if (window.google?.maps) {
     return Promise.resolve(window.google.maps);
   }
-
   if (googleMapsLoaderPromise) {
     return googleMapsLoaderPromise;
   }
@@ -71,9 +83,16 @@ export default function TripDetailPage() {
   const navigate = useNavigate();
   const { tripId } = useParams();
 
-  const [trip, setTrip] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deletingTrip, setDeletingTrip] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const [preferences, setPreferences] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState("");
+
   const [activeTab, setActiveTab] = useState("overview");
   const [mapLoading, setMapLoading] = useState(true);
   const [mapError, setMapError] = useState("");
@@ -85,100 +104,103 @@ export default function TripDetailPage() {
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [noteError, setNoteError] = useState("");
+
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
   const routeRendererRefs = useRef([]);
 
+  const fetchDetail = async ({ showPageLoading = true } = {}) => {
+    try {
+      if (showPageLoading) setLoading(true);
+      setError("");
+      const data = await getTripDetail(tripId);
+      setDetail(data);
+      setPreferences((prev) => prev || preferencesToText(data?.trip?.preferences));
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        setError(err.response?.data?.error || "Failed to load trip detail");
+      } else {
+        setError("Failed to load trip detail");
+      }
+    } finally {
+      if (showPageLoading) setLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
-      try {
-        setLoading(true);
-        setError("");
-        const data = await getTripDetail(tripId);
-        if (!cancelled) {
-          setTrip(data);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        if (axios.isAxiosError(err) && err.response?.status === 404) {
-          setError("Trip not found");
-        } else {
-          setError("Failed to load trip detail");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      if (cancelled) return;
+      await fetchDetail({ showPageLoading: true });
     })();
-
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripId]);
 
-  const totalPois = useMemo(() => {
-    if (!trip?.days) return 0;
-    return trip.days.reduce((sum, day) => sum + (day.pois?.length || 0), 0);
-  }, [trip]);
+  const trip = detail?.trip ?? null;
+
+  const sortedDays = useMemo(() => {
+    const days = Array.isArray(detail?.days) ? [...detail.days] : [];
+    days.sort((a, b) => (a.day_number ?? 0) - (b.day_number ?? 0));
+    return days.map((day) => ({
+      ...day,
+      pois: [...(day.pois || [])].sort((a, b) => (a.visit_order ?? 0) - (b.visit_order ?? 0)),
+    }));
+  }, [detail]);
+
+  useEffect(() => {
+    if (activeTab === "overview") return;
+    const exists = sortedDays.some((day) => String(day.day_id) === String(activeTab));
+    if (!exists) {
+      setActiveTab("overview");
+    }
+  }, [activeTab, sortedDays]);
+
+  const visibleDays = useMemo(() => {
+    if (activeTab === "overview") return sortedDays;
+    return sortedDays.filter((day) => String(day.day_id) === String(activeTab));
+  }, [sortedDays, activeTab]);
+
+  const totalPois = useMemo(
+    () => sortedDays.reduce((sum, day) => sum + (day.pois?.length || 0), 0),
+    [sortedDays]
+  );
 
   const mapPoints = useMemo(() => {
-    const days = trip?.days ?? [];
-    const selectedDays =
-      activeTab === "overview"
-        ? days
-        : days.filter((day) => String(day.day_id) === String(activeTab));
-
-    return selectedDays.flatMap((day) =>
-      (day.pois ?? [])
-        .map((item) => {
-          const latRaw = item.poi?.lat;
-          const lngRaw = item.poi?.lng;
-
-          if (latRaw == null || lngRaw == null || latRaw === "" || lngRaw === "") {
-            return null;
-          }
-
-          const lat = Number(latRaw);
-          const lng = Number(lngRaw);
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-            return null;
-          }
-
+    return visibleDays.flatMap((day) =>
+      (day.pois || [])
+        .map((poi) => {
+          const lat = Number(poi.lat);
+          const lng = Number(poi.lng);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
           return {
             lat,
             lng,
-            name: item.poi?.name || "Unnamed POI",
-            dayPoiId: item.day_poi_id,
+            name: poi.name || "Unnamed POI",
             dayNumber: day.day_number,
-            visitOrder: item.visit_order,
+            visitOrder: poi.visit_order,
           };
         })
         .filter(Boolean)
     );
-  }, [trip, activeTab]);
+  }, [visibleDays]);
 
   const routeGroups = useMemo(() => {
-    const days = trip?.days ?? [];
-    const selectedDays =
-      activeTab === "overview"
-        ? days
-        : days.filter((day) => String(day.day_id) === String(activeTab));
-
-    return selectedDays
+    return visibleDays
       .map((day, idx) => {
-        const points = (day.pois ?? [])
-          .map((item) => {
-            const lat = Number(item.poi?.lat);
-            const lng = Number(item.poi?.lng);
+        const points = (day.pois || [])
+          .map((poi) => {
+            const lat = Number(poi.lat);
+            const lng = Number(poi.lng);
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
             return {
               lat,
               lng,
-              name: item.poi?.name || "Unnamed POI",
-              dayPoiId: item.day_poi_id,
-              visitOrder: item.visit_order,
+              name: poi.name || "Unnamed POI",
+              visitOrder: poi.visit_order,
             };
           })
           .filter(Boolean);
@@ -191,13 +213,7 @@ export default function TripDetailPage() {
         };
       })
       .filter((group) => group.points.length >= 2);
-  }, [trip, activeTab]);
-
-  const visibleDays = useMemo(() => {
-    if (!trip?.days) return [];
-    if (activeTab === "overview") return trip.days;
-    return trip.days.filter((day) => String(day.day_id) === String(activeTab));
-  }, [trip, activeTab]);
+  }, [visibleDays]);
 
   const routeLegendItems = useMemo(() => {
     if (activeTab !== "overview") return [];
@@ -225,8 +241,8 @@ export default function TripDetailPage() {
         setMapError("");
         const maps = await loadGoogleMapsApi(apiKey);
         if (cancelled) return;
-
         if (!mapContainerRef.current) return;
+
         if (!mapRef.current) {
           mapRef.current = new maps.Map(mapContainerRef.current, {
             center: DEFAULT_MAP_CENTER,
@@ -237,12 +253,11 @@ export default function TripDetailPage() {
           });
         }
       } catch (err) {
-        if (cancelled) return;
-        setMapError(err instanceof Error ? err.message : "Failed to load map");
-      } finally {
         if (!cancelled) {
-          setMapLoading(false);
+          setMapError(err instanceof Error ? err.message : "Failed to load map");
         }
+      } finally {
+        if (!cancelled) setMapLoading(false);
       }
     })();
 
@@ -256,9 +271,7 @@ export default function TripDetailPage() {
     const googleMaps = window.google?.maps;
     if (!map || !googleMaps) return;
 
-    for (const marker of markerRefs.current) {
-      marker.setMap(null);
-    }
+    for (const marker of markerRefs.current) marker.setMap(null);
     markerRefs.current = [];
 
     if (mapPoints.length === 0) {
@@ -295,9 +308,7 @@ export default function TripDetailPage() {
 
     if (!map || !googleMaps) return;
 
-    for (const renderer of routeRendererRefs.current) {
-      renderer.setMap(null);
-    }
+    for (const renderer of routeRendererRefs.current) renderer.setMap(null);
     routeRendererRefs.current = [];
     setRouteError("");
 
@@ -343,7 +354,6 @@ export default function TripDetailPage() {
               strokeWeight: 5,
             },
           });
-
           routeRendererRefs.current.push(renderer);
         }
       } catch (err) {
@@ -351,9 +361,7 @@ export default function TripDetailPage() {
           setRouteError(err instanceof Error ? err.message : "Failed to draw route");
         }
       } finally {
-        if (!cancelled) {
-          setRouteLoading(false);
-        }
+        if (!cancelled) setRouteLoading(false);
       }
     })();
 
@@ -362,9 +370,53 @@ export default function TripDetailPage() {
     };
   }, [routeGroups]);
 
-  const openNoteModal = (dayPoi) => {
-    setEditingDayPoiId(dayPoi.day_poi_id);
-    setNoteDraft(dayPoi.note ?? "");
+  const handleGenerate = async () => {
+    try {
+      setGenerating(true);
+      setGenerateError("");
+      await generateAiTripItinerary(tripId, {
+        preferences: preferences.trim() || undefined,
+      });
+      await fetchDetail({ showPageLoading: false });
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        setGenerateError(err.response?.data?.error || "Failed to generate itinerary");
+      } else {
+        setGenerateError("Failed to generate itinerary");
+      }
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleDeleteTrip = async () => {
+    if (!trip?.trip_id || deletingTrip) return;
+
+    const confirmed = window.confirm(`Delete trip "${trip.title || "Untitled trip"}"?`);
+    if (!confirmed) return;
+
+    try {
+      setDeletingTrip(true);
+      setDeleteError("");
+      await deleteTrip(trip.trip_id);
+      navigate("/trips");
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        setDeleteError(err.response?.data?.error || "Failed to delete trip");
+      } else if (err instanceof Error) {
+        setDeleteError(err.message || "Failed to delete trip");
+      } else {
+        setDeleteError("Failed to delete trip");
+      }
+    } finally {
+      setDeletingTrip(false);
+    }
+  };
+
+  const openNoteModal = (poi) => {
+    if (!poi?.day_poi_id) return;
+    setEditingDayPoiId(poi.day_poi_id);
+    setNoteDraft(poi.note ?? "");
     setNoteError("");
     setNoteModalOpen(true);
   };
@@ -379,22 +431,20 @@ export default function TripDetailPage() {
 
   const saveNote = async () => {
     if (!editingDayPoiId) return;
-
     try {
       setSavingNote(true);
       setNoteError("");
-
-      const nextNote = noteDraft.trim() === "" ? null : noteDraft;
+      const nextNote = noteDraft.trim() === "" ? null : noteDraft.trim();
       await patchDayPoiNote(editingDayPoiId, nextNote);
 
-      setTrip((prev) => {
+      setDetail((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          days: prev.days.map((day) => ({
+          days: (prev.days || []).map((day) => ({
             ...day,
-            pois: day.pois.map((item) =>
-              item.day_poi_id === editingDayPoiId ? { ...item, note: nextNote } : item
+            pois: (day.pois || []).map((poi) =>
+              poi.day_poi_id === editingDayPoiId ? { ...poi, note: nextNote } : poi
             ),
           })),
         };
@@ -412,9 +462,7 @@ export default function TripDetailPage() {
     }
   };
 
-  if (loading) {
-    return <div className="muted">Loading trip detail...</div>;
-  }
+  if (loading) return <div className="muted">Loading trip detail...</div>;
 
   if (error) {
     return (
@@ -428,9 +476,7 @@ export default function TripDetailPage() {
     );
   }
 
-  if (!trip) {
-    return <div className="muted">No data</div>;
-  }
+  if (!trip) return <div className="muted">No trip data</div>;
 
   return (
     <>
@@ -440,10 +486,24 @@ export default function TripDetailPage() {
             <button className="secondaryBtn" type="button" onClick={() => navigate("/trips")}>
               Back
             </button>
-            <div className="muted" style={{ fontSize: 13 }}>
-              {activeTab === "overview" ? "Overview" : "Day view"}
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <div className="muted" style={{ fontSize: 13 }}>
+                {activeTab === "overview" ? "Overview" : "Day view"}
+              </div>
+              <button
+                type="button"
+                className="secondaryBtn"
+                onClick={handleDeleteTrip}
+                disabled={deletingTrip}
+                aria-label="Delete trip"
+                title="Delete trip"
+                style={deleteTripButtonStyle}
+              >
+                {deletingTrip ? "..." : "🗑"}
+              </button>
             </div>
           </div>
+
           <div style={mapShellStyle}>
             <div ref={mapContainerRef} style={heroMapCanvasStyle} />
             {mapLoading ? <div style={mapOverlayStyle}>Loading map...</div> : null}
@@ -452,6 +512,7 @@ export default function TripDetailPage() {
               <div style={mapOverlayStyle}>No POIs with valid coordinates for this tab</div>
             ) : null}
           </div>
+
           <div style={mapFloatingInfoStyle}>
             <div style={{ fontWeight: 700, fontSize: 14 }}>
               {routeLoading
@@ -485,17 +546,51 @@ export default function TripDetailPage() {
 
         <section style={drawerStyle}>
           <div style={drawerHandleStyle} />
+          {deleteError ? <div style={{ ...errorTextStyle, marginBottom: 8 }}>{deleteError}</div> : null}
 
-          <div className="row" style={{ marginTop: 4, alignItems: "flex-start" }}>
-            <div>
+          <div className="row" style={{ marginTop: 4, alignItems: "flex-start", gap: 12 }}>
+            <div style={{ flex: 1 }}>
               <div className="h1" style={{ marginBottom: 4 }}>{trip.title || "Trip Detail"}</div>
-              <div className="muted">{trip.destination}</div>
+              <div className="muted">{trip.destination || "-"}</div>
               <div className="muted" style={{ marginTop: 4 }}>
                 {formatDateRange(trip.start_date, trip.end_date)}
-                {totalPois > 0 ? ` | ${totalPois} stops` : ""}
+                {` | ${sortedDays.length} days | ${totalPois} POIs`}
               </div>
+              {preferencesToText(trip.preferences) ? (
+                <div className="muted" style={{ marginTop: 4 }}>
+                  Preferences: {preferencesToText(trip.preferences)}
+                </div>
+              ) : null}
             </div>
           </div>
+
+          <section style={{ ...sectionCardStyle, marginTop: 12 }}>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>SmartGo / AI生成行程</div>
+            <div className="stack" style={{ gap: 10 }}>
+              <label style={labelStyle}>
+                <span>Preferences (optional if already saved on trip)</span>
+                <textarea
+                  value={preferences}
+                  onChange={(e) => setPreferences(e.target.value)}
+                  placeholder="e.g. food + culture + family friendly, less shopping"
+                  rows={3}
+                  style={textareaStyle}
+                  disabled={generating}
+                />
+              </label>
+
+              {generateError ? <div style={errorTextStyle}>{generateError}</div> : null}
+
+              <div className="row" style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Existing itinerary for this trip will be replaced.
+                </div>
+                <button type="button" className="primaryBtn" onClick={handleGenerate} disabled={generating}>
+                  {generating ? "Generating..." : "SmartGo / AI生成行程"}
+                </button>
+              </div>
+            </div>
+          </section>
 
           <div className="row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-start", marginTop: 12 }}>
             <button
@@ -506,7 +601,7 @@ export default function TripDetailPage() {
             >
               Overview
             </button>
-            {(trip.days ?? []).map((day) => (
+            {sortedDays.map((day) => (
               <button
                 key={day.day_id}
                 type="button"
@@ -520,62 +615,63 @@ export default function TripDetailPage() {
           </div>
 
           <div className="stack" style={{ gap: 14, marginTop: 14 }}>
-            {trip.description ? <div className="muted">{trip.description}</div> : null}
-            {trip.note ? <div style={sectionCardStyle}>Trip Note: {trip.note}</div> : null}
-
-            <div style={sectionCardStyle}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>mapPoints debug</div>
-              <pre style={debugPreStyle}>
-                {JSON.stringify(mapPoints, null, 2)}
-              </pre>
-            </div>
-
             {visibleDays.length ? (
               visibleDays.map((day) => (
-            <section key={day.day_id} style={sectionCardStyle}>
-              <div className="row" style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 700 }}>Day {day.day_number}</div>
-                <div className="muted">{day.pois?.length || 0} POIs</div>
-              </div>
+                <section key={day.day_id} style={sectionCardStyle}>
+                  <div className="row" style={{ marginBottom: 10, alignItems: "center" }}>
+                    <div style={{ fontWeight: 700 }}>Day {day.day_number}</div>
+                    <div className="muted">{formatDayFromTripStart(trip.start_date, day.day_number) || "-"}</div>
+                  </div>
 
-              {!day.pois?.length ? (
-                <div className="muted">No POIs yet</div>
-              ) : (
-                <div className="stack" style={{ gap: 10 }}>
-                  {day.pois.map((item) => (
-                    <div key={item.day_poi_id} style={poiCardStyle}>
-                      <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
-                        <div style={{ minWidth: 28, fontWeight: 700, color: "#0f172a" }}>
-                          #{item.visit_order ?? "-"}
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 700 }}>{item.poi?.name || "Unnamed POI"}</div>
-                          <div className="muted" style={{ marginTop: 2, fontSize: 13 }}>
-                            {item.poi?.type || "POI"}
-                            {item.poi?.address ? ` | ${item.poi.address}` : ""}
+                  {!day.pois?.length ? (
+                    <div className="muted">No POIs yet</div>
+                  ) : (
+                    <div className="stack" style={{ gap: 10 }}>
+                      {day.pois.map((poi) => (
+                        <div key={poi.day_poi_id ?? `${day.day_id}-${poi.visit_order}-${poi.poi_id}`} style={poiCardStyle}>
+                          <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
+                            <div style={{ minWidth: 28, fontWeight: 700, color: "#0f172a" }}>
+                              #{poi.visit_order ?? "-"}
+                            </div>
+
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 700 }}>{poi.name || "Unnamed POI"}</div>
+                              <div className="muted" style={{ marginTop: 2, fontSize: 13 }}>
+                                {poi.type || "other"}
+                                {poi.address ? ` | ${poi.address}` : ""}
+                              </div>
+
+                              {(poi.start_time || poi.duration_min) ? (
+                                <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>
+                                  {poi.start_time || "--:--"}
+                                  {" | "}
+                                  {poi.duration_min ? `${poi.duration_min} min` : "duration not set"}
+                                </div>
+                              ) : null}
+
+                              {poi.description ? (
+                                <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.4, color: "#334155" }}>
+                                  {poi.description}
+                                </div>
+                              ) : null}
+
+                              {poi.day_poi_id ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openNoteModal(poi)}
+                                  style={noteButtonStyle(Boolean(poi.note))}
+                                  aria-label="Edit note"
+                                >
+                                  {poi.note ? poi.note : "备注"}
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
-
-                          <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>
-                            {item.start_time || "--:--"}
-                            {" · "}
-                            {item.duration_min ? `${item.duration_min} min` : "duration not set"}
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => openNoteModal(item)}
-                            style={noteButtonStyle(item.note)}
-                            aria-label="Edit note"
-                          >
-                            {item.note ? item.note : "备注"}
-                          </button>
                         </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
+                  )}
+                </section>
               ))
             ) : (
               <div style={sectionCardStyle}>
@@ -596,14 +692,12 @@ export default function TripDetailPage() {
             <textarea
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
-              placeholder="备注内容"
+              placeholder="输入 POI 备注"
               rows={5}
               style={textareaStyle}
               disabled={savingNote}
             />
-            {noteError ? (
-              <div style={{ color: "#dc2626", fontSize: 13 }}>{noteError}</div>
-            ) : null}
+            {noteError ? <div style={errorTextStyle}>{noteError}</div> : null}
             <div className="row" style={{ marginTop: 12, justifyContent: "flex-end", gap: 10 }}>
               <button className="secondaryBtn" type="button" onClick={closeNoteModal} disabled={savingNote}>
                 Cancel
@@ -668,32 +762,56 @@ const modalCardStyle = {
   border: "1px solid rgba(148,163,184,0.22)",
 };
 
+const labelStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  fontSize: 13,
+  color: "#334155",
+};
+
+const inputStyle = {
+  border: "1px solid rgba(148,163,184,0.35)",
+  borderRadius: 10,
+  padding: "10px 12px",
+  fontSize: 14,
+  outline: "none",
+  background: "#fff",
+};
+
 const textareaStyle = {
+  ...inputStyle,
   width: "100%",
   resize: "vertical",
-  minHeight: 120,
-  borderRadius: 12,
-  border: "1px solid rgba(148,163,184,0.35)",
-  padding: 12,
-  outline: "none",
-  fontSize: 14,
-  lineHeight: 1.4,
+  minHeight: 100,
+  fontFamily: "inherit",
   boxSizing: "border-box",
 };
 
-const debugPreStyle = {
-  margin: 0,
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-  fontSize: 12,
-  lineHeight: 1.4,
-  color: "#334155",
+const errorTextStyle = {
+  color: "#dc2626",
+  fontSize: 13,
 };
 
 const activeTabStyle = {
   background: "#0f172a",
   color: "#fff",
   borderColor: "#0f172a",
+};
+
+const deleteTripButtonStyle = {
+  width: 38,
+  minWidth: 38,
+  height: 38,
+  borderRadius: 999,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0,
+  fontSize: 18,
+  borderColor: "rgba(220,38,38,0.28)",
+  color: "#b91c1c",
+  background: "rgba(255,255,255,0.95)",
 };
 
 const pageShellStyle = {
@@ -793,11 +911,6 @@ const mapShellStyle = {
   overflow: "hidden",
   border: "1px solid rgba(148,163,184,0.18)",
   background: "rgba(248,250,252,0.9)",
-};
-
-const mapCanvasStyle = {
-  width: "100%",
-  height: 260,
 };
 
 const mapOverlayStyle = {

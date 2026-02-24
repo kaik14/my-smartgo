@@ -1,0 +1,30 @@
+const malaysiaLocations = {
+  featured: [
+    "Kuala Lumpur",
+    "Penang (George Town)",
+    "Langkawi",
+    "Melaka",
+    "Johor Bahru",
+    "Kota Kinabalu",
+    "Kuching",
+  ],
+  states: [
+    { state: "Johor", cities: ["Johor Bahru", "Muar", "Batu Pahat", "Kluang", "Desaru"] },
+    { state: "Kedah", cities: ["Alor Setar", "Langkawi", "Sungai Petani", "Kulim"] },
+    { state: "Kelantan", cities: ["Kota Bharu", "Pasir Mas", "Tanah Merah"] },
+    { state: "Melaka", cities: ["Melaka", "Alor Gajah", "Jasin"] },
+    { state: "Negeri Sembilan", cities: ["Seremban", "Port Dickson", "Nilai"] },
+    { state: "Pahang", cities: ["Kuantan", "Cameron Highlands", "Bentong", "Temerloh"] },
+    { state: "Penang", cities: ["George Town", "Butterworth", "Batu Ferringhi"] },
+    { state: "Perak", cities: ["Ipoh", "Taiping", "Teluk Intan", "Lumut"] },
+    { state: "Perlis", cities: ["Kangar", "Arau", "Padang Besar"] },
+    { state: "Sabah", cities: ["Kota Kinabalu", "Sandakan", "Tawau", "Kundasang", "Semporna"] },
+    { state: "Sarawak", cities: ["Kuching", "Miri", "Sibu", "Bintulu"] },
+    { state: "Selangor", cities: ["Shah Alam", "Petaling Jaya", "Subang Jaya", "Klang", "Kajang"] },
+    { state: "Terengganu", cities: ["Kuala Terengganu", "Redang", "Dungun"] },
+    { state: "Kuala Lumpur", cities: ["Kuala Lumpur"] },
+    { state: "Putrajaya", cities: ["Putrajaya"] },
+    { state: "Labuan", cities: ["Labuan"] },
+  ],
+};
+export default malaysiaLocations;

@@ -56,7 +56,32 @@ export const createTrip = async (payload) => {
 };
 
 export const getTripDetail = async (tripId) => {
-  const res = await api.get(`/trips/${tripId}`);
+  const res = await api.get(`/trips/${tripId}/detail`);
+  return res.data;
+};
+
+export const deleteTrip = async (tripId) => {
+  if (String(tripId).startsWith("guest-")) {
+    guestTrips = guestTrips.filter((trip) => String(trip.trip_id) !== String(tripId));
+    return { message: "Trip deleted successfully" };
+  }
+
+  const user = getLocalUser();
+  if (!user?.user_id) {
+    throw new Error("user_id is required");
+  }
+
+  const res = await api.delete(`/trips/${tripId}`, {
+    params: { user_id: user.user_id },
+    data: { user_id: user.user_id },
+  });
+  return res.data;
+};
+
+export const generateAiTripItinerary = async (tripId, payload) => {
+  const res = await api.post(`/trips/${tripId}/ai-generate`, payload, {
+    timeout: 60000,
+  });
   return res.data;
 };
 
