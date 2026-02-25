@@ -21,6 +21,7 @@ import {
   patchTrip,
   reorderDayPois,
 } from "../services/api";
+import malaysiaLocations from "../data/malaysiaLocations";
 import { isLikelyMalaysiaCoordinates, MALAYSIA_MAP_BOUNDS } from "../utils/malaysiaGeo";
 function formatDateRange(startDate, endDate) {
   if (!startDate || !endDate) return "";
@@ -197,6 +198,20 @@ const DEFAULT_MAP_CENTER = { lat: 3.139, lng: 101.6869 };
 const ROUTE_COLORS = ["#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6"];
 const TRIP_RECOMMEND_RADIUS_METERS = 2500;
 const TRIP_RECOMMEND_MAX_RESULTS = 12;
+const MALAYSIA_FEATURED_CITY_OPTIONS = Array.isArray(malaysiaLocations?.featured)
+  ? malaysiaLocations.featured.map((city) => String(city || "").trim()).filter(Boolean)
+  : [];
+const MALAYSIA_CITY_OPTIONS = (() => {
+  const unique = new Set();
+  for (const city of MALAYSIA_FEATURED_CITY_OPTIONS) unique.add(city);
+  for (const group of Array.isArray(malaysiaLocations?.states) ? malaysiaLocations.states : []) {
+    for (const city of Array.isArray(group?.cities) ? group.cities : []) {
+      const normalized = String(city || "").trim();
+      if (normalized) unique.add(normalized);
+    }
+  }
+  return Array.from(unique);
+})();
 let googleMapsLoaderPromise = null;
 
 function loadGoogleMapsApi(apiKey) {
@@ -834,6 +849,11 @@ export default function TripDetailPage() {
   const [recommendedPoisLoading, setRecommendedPoisLoading] = useState(false);
   const [recommendedPoisError, setRecommendedPoisError] = useState("");
   const [recommendedSearchCenter, setRecommendedSearchCenter] = useState(null);
+  const [recommendedLocationLabel, setRecommendedLocationLabel] = useState("Nearby in Malaysia");
+  const [recommendedCityPickerOpen, setRecommendedCityPickerOpen] = useState(false);
+  const [recommendedCitySearch, setRecommendedCitySearch] = useState("");
+  const [recommendedCityPickerError, setRecommendedCityPickerError] = useState("");
+  const [recommendedCitySwitching, setRecommendedCitySwitching] = useState(false);
 
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -851,6 +871,9 @@ export default function TripDetailPage() {
   const recommendedSearchCacheRef = useRef(new Map());
   const recommendedIdleListenerRef = useRef(null);
   const recommendedDebounceTimerRef = useRef(null);
+  const recommendedLocationLabelCacheRef = useRef(new Map());
+  const recommendedLocationLabelTimerRef = useRef(null);
+  const recommendedLocationReqSeqRef = useRef(0);
   const favoritePoiIdByPlaceIdRef = useRef(new Map());
   const placeDetailPanelCacheRef = useRef(new Map());
 
@@ -880,11 +903,22 @@ export default function TripDetailPage() {
       clearTimeout(recommendedDebounceTimerRef.current);
       recommendedDebounceTimerRef.current = null;
     }
+    if (recommendedLocationLabelTimerRef.current) {
+      clearTimeout(recommendedLocationLabelTimerRef.current);
+      recommendedLocationLabelTimerRef.current = null;
+    }
     setShowRecommendedPois(false);
     setRecommendedPois([]);
     setRecommendedPoisLoading(false);
     setRecommendedPoisError("");
     setRecommendedSearchCenter(null);
+    setRecommendedLocationLabel("Nearby in Malaysia");
+    setRecommendedCityPickerOpen(false);
+    setRecommendedCitySearch("");
+    setRecommendedCityPickerError("");
+    setRecommendedCitySwitching(false);
+    recommendedLocationLabelCacheRef.current = new Map();
+    recommendedLocationReqSeqRef.current = 0;
     setSelectedPoiDetailTarget(null);
     setPoiDetailPanelOpen(false);
     setPoiDetailLoading(false);

@@ -585,7 +585,14 @@ export default function TripAiChatPage() {
   }
 
   return (
-    <div style={{ display: "grid", gap: 12, minHeight: "calc(100vh - 120px)" }}>
+    <div
+      style={{
+        display: "grid",
+        gap: 12,
+        minHeight: "calc(100vh - 84px)",
+        marginTop: "calc(-1 * clamp(18px, 2.4vw, 28px))",
+      }}
+    >
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
         <button className="secondaryBtn" type="button" onClick={() => navigate(`/trips/${tripId}`)}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -612,27 +619,33 @@ export default function TripAiChatPage() {
           border: "1px solid rgba(148,163,184,0.25)",
           background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96))",
           boxShadow: "0 16px 32px rgba(15,23,42,0.07)",
-          padding: 14,
+          padding: "0 14px 14px",
         }}
       >
-        <div className="row" style={{ alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <div
-            aria-hidden="true"
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 999,
-              display: "grid",
-              placeItems: "center",
-              color: "#fff",
-              background: "linear-gradient(135deg, #7c3aed, #22c55e)",
-              boxShadow: "0 8px 18px rgba(124,58,237,0.25)",
-            }}
-          >
-            <AiChatIcon size={18} />
-          </div>
-          <div>
-            <div className="h1" style={{ fontSize: 20, marginBottom: 2 }}>AI Trip Chat</div>
+        <div className="row" style={{ alignItems: "center", gap: 10, marginBottom: 8, justifyContent: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <div
+              className="h1"
+              style={{ fontSize: 20, marginBottom: 2, display: "inline-flex", alignItems: "center", gap: 8 }}
+            >
+              <span>AI Trip Chat</span>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 999,
+                  display: "inline-grid",
+                  placeItems: "center",
+                  color: "#fff",
+                  background: "linear-gradient(135deg, #7c3aed, #22c55e)",
+                  boxShadow: "0 8px 18px rgba(124,58,237,0.25)",
+                  flexShrink: 0,
+                }}
+              >
+                <AiChatIcon size={18} />
+              </span>
+            </div>
             <div className="muted" style={{ fontSize: 12 }}>
               {trip?.title || "Trip"} · {trip?.destination || "-"}
             </div>
@@ -644,8 +657,8 @@ export default function TripAiChatPage() {
             borderRadius: 16,
             border: "1px solid rgba(148,163,184,0.18)",
             background: "rgba(255,255,255,0.9)",
-            minHeight: 280,
-            maxHeight: "48vh",
+            minHeight: 360,
+            maxHeight: "56vh",
             overflowY: "auto",
             padding: 10,
             display: "grid",
@@ -689,7 +702,7 @@ export default function TripAiChatPage() {
                 sendMessage();
               }
             }}
-            rows={3}
+            rows={6}
             placeholder="Tell AI what to adjust in this trip..."
             disabled={busySending || applying}
             style={{
@@ -697,6 +710,7 @@ export default function TripAiChatPage() {
               borderRadius: 14,
               border: "1px solid rgba(148,163,184,0.28)",
               padding: 10,
+              minHeight: 160,
               resize: "vertical",
               font: "inherit",
               outline: "none",

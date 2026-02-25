@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDownIcon, LocationArrowIcon } from "../components/icons";
 import PoiDetailPanel from "../components/PoiDetailPanel";
 import { createFavoriteFromPlace, deleteFavorite as deleteFavoriteApi, getFavorites } from "../services/api";
+import malaysiaLocations from "../data/malaysiaLocations";
 import { isLikelyMalaysiaCoordinates, MALAYSIA_MAP_BOUNDS } from "../utils/malaysiaGeo";
 
 const DEFAULT_CENTER = { lat: 3.139, lng: 101.6869 };
@@ -13,6 +14,19 @@ const NEARBY_TYPE_META = {
   food: { label: "Food", emoji: "\u{1F35C}" },
   attractions: { label: "Attractions", emoji: "\u{1F3DB}\uFE0F" },
 };
+const MALAYSIA_FEATURED_CITIES = Array.isArray(malaysiaLocations?.featured)
+  ? malaysiaLocations.featured.map((city) => String(city || "").trim()).filter(Boolean)
+  : [];
+const MALAYSIA_ALL_CITIES = (() => {
+  const unique = new Set(MALAYSIA_FEATURED_CITIES);
+  for (const stateGroup of Array.isArray(malaysiaLocations?.states) ? malaysiaLocations.states : []) {
+    for (const city of Array.isArray(stateGroup?.cities) ? stateGroup.cities : []) {
+      const normalized = String(city || "").trim();
+      if (normalized) unique.add(normalized);
+    }
+  }
+  return Array.from(unique);
+})();
 
 let googleMapsLoaderPromise = null;
 
@@ -185,8 +199,12 @@ function geocodeLatLng(lat, lng) {
         findByType("administrative_area_level_1");
       const country = findByType("country");
       const label = [city, country].filter(Boolean).join(", ");
-
-      resolve(label || first?.formatted_address || "Current Location");
+      resolve({
+        city: city || "",
+        country: country || "",
+        label: label || first?.formatted_address || "Current Location",
+        formattedAddress: String(first?.formatted_address || "").trim(),
+      });
     });
   });
 }
@@ -389,6 +407,10 @@ export default function NearbyPage() {
   const [places, setPlaces] = useState([]);
   const [mapSearchCenter, setMapSearchCenter] = useState(null);
   const [headerLocation, setHeaderLocation] = useState("Locating...");
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const [locationPickerQuery, setLocationPickerQuery] = useState("");
+  const [locationPickerError, setLocationPickerError] = useState("");
+  const [locationPickerBusy, setLocationPickerBusy] = useState(false);
   const [headerWeather, setHeaderWeather] = useState(null);
   const [headerWeatherLoading, setHeaderWeatherLoading] = useState(false);
   const [poiDetailPanelOpen, setPoiDetailPanelOpen] = useState(false);
@@ -414,8 +436,14 @@ export default function NearbyPage() {
   const nearbyPlaceDetailsCacheRef = useRef(new Map());
   const mapIdleListenerRef = useRef(null);
   const favoritePoiIdByPlaceIdRef = useRef(new Map());
+  const locationPickerRef = useRef(null);
 
   const centerForSearch = mapSearchCenter ?? userLocation ?? DEFAULT_CENTER;
+  const filteredMalaysiaCities = useMemo(() => {
+    const q = String(locationPickerQuery || "").trim().toLowerCase();
+    if (!q) return MALAYSIA_ALL_CITIES;
+    return MALAYSIA_ALL_CITIES.filter((city) => city.toLowerCase().includes(q));
+  }, [locationPickerQuery]);
 
   const handleLocateUser = (options = {}) => {
     const { silent = false } = options;
@@ -476,6 +504,55 @@ export default function NearbyPage() {
         maximumAge: 60000,
       }
     );
+  };
+
+  const handleJumpToMalaysiaCity = async (cityName) => {
+    const city = String(cityName || "").trim();
+    if (!city || locationPickerBusy) return;
+
+    const map = mapRef.current;
+    const geocoder = window.google?.maps ? new window.google.maps.Geocoder() : null;
+    if (!map || !geocoder) {
+      setLocationPickerError("Map is not ready yet");
+      return;
+    }
+
+    try {
+      setLocationPickerBusy(true);
+      setLocationPickerError("");
+
+      const result = await new Promise((resolve, reject) => {
+        geocoder.geocode({ address: `${city}, Malaysia`, region: "MY" }, (results, status) => {
+          if (status !== "OK") {
+            reject(new Error(`Geocoder failed: ${status}`));
+            return;
+          }
+          resolve(Array.isArray(results) ? results[0] : null);
+        });
+      });
+
+      const point = result?.geometry?.location;
+      const lat = point?.lat?.();
+      const lng = point?.lng?.();
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !isLikelyMalaysiaCoordinates(lat, lng)) {
+        throw new Error("Selected city is outside Malaysia");
+      }
+
+      if (result?.geometry?.viewport) {
+        map.fitBounds(result.geometry.viewport, 32);
+      } else {
+        map.panTo({ lat, lng });
+        map.setZoom(12);
+      }
+      setMapSearchCenter({ lat, lng });
+      setHeaderLocation(city);
+      setLocationPickerOpen(false);
+      setLocationPickerQuery("");
+    } catch (err) {
+      setLocationPickerError(err instanceof Error ? err.message : "Failed to switch location");
+    } finally {
+      setLocationPickerBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -544,6 +621,19 @@ export default function NearbyPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!locationPickerOpen) return;
+
+    const onPointerDown = (event) => {
+      if (locationPickerRef.current && !locationPickerRef.current.contains(event.target)) {
+        setLocationPickerOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [locationPickerOpen]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -743,9 +833,11 @@ export default function NearbyPage() {
 
     (async () => {
       try {
-        const label = await geocodeLatLng(centerForSearch.lat, centerForSearch.lng);
+        const result = await geocodeLatLng(centerForSearch.lat, centerForSearch.lng);
         if (cancelled || seq !== locationLookupSeqRef.current) return;
-        setHeaderLocation(label);
+        const country = String(result?.country || "").trim().toLowerCase();
+        const isMalaysiaCountry = country === "malaysia";
+        setHeaderLocation(isMalaysiaCountry ? result.label : "Out of Malaysia");
       } catch {
         if (cancelled || seq !== locationLookupSeqRef.current) return;
         setHeaderLocation(userLocation ? "Current Location" : "Kuala Lumpur, Malaysia");
@@ -976,16 +1068,76 @@ export default function NearbyPage() {
     <div className="nearbyPage">
       <div className="mapStage">
         <div className="nearbyHeader">
-          <div>
-            <div className="nearbyTitle">
-              {headerLocation}
-              <span className="nearbyCaret">
+          <div style={{ position: "relative" }} ref={locationPickerRef}>
+            <button
+              type="button"
+              className="nearbyTitle"
+              style={nearbyHeaderLocationButtonStyle}
+              onClick={() => {
+                setLocationPickerOpen((prev) => !prev);
+                setLocationPickerError("");
+              }}
+              aria-haspopup="dialog"
+              aria-expanded={locationPickerOpen}
+              title="Choose a Malaysia city"
+            >
+              <span>{headerLocation}</span>
+              <span className="nearbyCaret" style={{ transform: locationPickerOpen ? "rotate(180deg)" : "none" }}>
                 <ChevronDownIcon />
               </span>
-            </div>
-            <div className="muted nearbyWeather">
+            </button>
+            <div className="nearbyWeather" style={nearbyHeaderWeatherTextStyle}>
               {headerWeatherLoading ? "Loading weather..." : formatWeatherLine(headerWeather)}
             </div>
+            {locationPickerOpen ? (
+              <div style={nearbyLocationPickerStyle} role="dialog" aria-label="Choose Malaysia city">
+                <div style={nearbyLocationPickerTitleStyle}>Switch nearby location (Malaysia)</div>
+                <input
+                  type="text"
+                  value={locationPickerQuery}
+                  onChange={(e) => setLocationPickerQuery(e.target.value)}
+                  placeholder="Search Malaysia city..."
+                  style={nearbyLocationPickerInputStyle}
+                  disabled={locationPickerBusy}
+                />
+                <div style={nearbyLocationPickerSectionLabelStyle}>Popular cities</div>
+                <div style={nearbyLocationPickerChipWrapStyle}>
+                  {MALAYSIA_FEATURED_CITIES.map((city) => (
+                    <button
+                      key={`featured-${city}`}
+                      type="button"
+                      style={nearbyLocationPickerChipStyle}
+                      onClick={() => void handleJumpToMalaysiaCity(city)}
+                      disabled={locationPickerBusy}
+                    >
+                      {city}
+                    </button>
+                  ))}
+                </div>
+                <div style={nearbyLocationPickerSectionLabelStyle}>All Malaysia cities</div>
+                <div style={nearbyLocationPickerListStyle}>
+                  {filteredMalaysiaCities.slice(0, 24).map((city) => (
+                    <button
+                      key={`city-${city}`}
+                      type="button"
+                      style={nearbyLocationPickerListItemStyle}
+                      onClick={() => void handleJumpToMalaysiaCity(city)}
+                      disabled={locationPickerBusy}
+                    >
+                      {city}
+                    </button>
+                  ))}
+                  {!filteredMalaysiaCities.length ? (
+                    <div className="muted" style={{ fontSize: 12, padding: "4px 2px" }}>
+                      No matching Malaysia city
+                    </div>
+                  ) : null}
+                </div>
+                {locationPickerError ? (
+                  <div style={{ color: "#dc2626", fontSize: 12, marginTop: 8 }}>{locationPickerError}</div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <button
             className="iconBtn nearbyLocateBtn"
@@ -1092,6 +1244,109 @@ const locateErrorStyle = {
   fontSize: 13,
   textAlign: "center",
   boxShadow: "0 8px 20px rgba(15,23,42,0.15)",
+};
+
+const nearbyHeaderLocationButtonStyle = {
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  margin: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  cursor: "pointer",
+  color: "#0f172a",
+  font: "inherit",
+  fontSize: 30,
+  fontWeight: 1000,
+  lineHeight: 1.1,
+  textAlign: "left",
+};
+
+const nearbyHeaderWeatherTextStyle = {
+  color: "#0f172a",
+  fontSize: 24,
+  lineHeight: 1.35,
+  fontWeight: 800,
+};
+
+const nearbyLocationPickerStyle = {
+  position: "absolute",
+  top: "calc(100% + 10px)",
+  left: 0,
+  width: "min(360px, calc(100vw - 40px))",
+  zIndex: 8,
+  background: "rgba(255,255,255,0.98)",
+  border: "1px solid rgba(148,163,184,0.22)",
+  borderRadius: 14,
+  boxShadow: "0 18px 36px rgba(15,23,42,0.16)",
+  padding: 12,
+};
+
+const nearbyLocationPickerTitleStyle = {
+  fontSize: 13,
+  fontWeight: 700,
+  color: "#0f172a",
+  marginBottom: 8,
+};
+
+const nearbyLocationPickerInputStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  border: "1px solid rgba(148,163,184,0.34)",
+  borderRadius: 10,
+  padding: "8px 10px",
+  fontSize: 13,
+  fontFamily: "inherit",
+  outline: "none",
+  background: "#fff",
+};
+
+const nearbyLocationPickerSectionLabelStyle = {
+  marginTop: 10,
+  marginBottom: 6,
+  fontSize: 11,
+  fontWeight: 700,
+  color: "#64748b",
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+};
+
+const nearbyLocationPickerChipWrapStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+};
+
+const nearbyLocationPickerChipStyle = {
+  border: "1px solid rgba(148,163,184,0.22)",
+  background: "rgba(248,250,252,0.95)",
+  borderRadius: 999,
+  padding: "6px 10px",
+  fontSize: 12,
+  cursor: "pointer",
+  color: "#0f172a",
+  fontFamily: "inherit",
+};
+
+const nearbyLocationPickerListStyle = {
+  maxHeight: 180,
+  overflowY: "auto",
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+};
+
+const nearbyLocationPickerListItemStyle = {
+  border: "1px solid rgba(148,163,184,0.16)",
+  background: "rgba(255,255,255,0.98)",
+  borderRadius: 10,
+  padding: "7px 10px",
+  fontSize: 13,
+  color: "#0f172a",
+  textAlign: "left",
+  cursor: "pointer",
+  fontFamily: "inherit",
 };
 
 
