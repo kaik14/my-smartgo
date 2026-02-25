@@ -1,9 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDownIcon, LocationArrowIcon } from "../components/icons";
+import PoiDetailPanel from "../components/PoiDetailPanel";
+import { createFavoriteFromPlace, deleteFavorite as deleteFavoriteApi, getFavorites } from "../services/api";
 
 const DEFAULT_CENTER = { lat: 3.139, lng: 101.6869 };
 const SEARCH_RADIUS_METERS = 2500;
-const MAX_RESULTS_PER_TYPE = 8;
+const MAX_RESULTS_PER_TYPE = 12;
+const MAX_RESULTS_ALL = 16;
+const NEARBY_TYPE_META = {
+  all: { label: "All", emoji: "\u{1F9ED}" },
+  food: { label: "Food", emoji: "\u{1F35C}" },
+  attractions: { label: "Attractions", emoji: "\u{1F3DB}\uFE0F" },
+};
 
 let googleMapsLoaderPromise = null;
 
@@ -32,7 +40,7 @@ function loadGoogleMapsApi(apiKey) {
     }
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=en`;
     script.async = true;
     script.defer = true;
     script.dataset.googleMapsSdk = "true";
@@ -68,6 +76,18 @@ function nearbySearch(service, request, statusEnum) {
   });
 }
 
+function placeDetailsRequest(service, request, statusEnum) {
+  return new Promise((resolve, reject) => {
+    service.getDetails(request, (result, status) => {
+      if (status === statusEnum.OK) {
+        resolve(result ?? null);
+        return;
+      }
+      reject(new Error(`Place details failed: ${status}`));
+    });
+  });
+}
+
 function toPlainPlace(place, fallbackType) {
   const lat = place.geometry?.location?.lat?.();
   const lng = place.geometry?.location?.lng?.();
@@ -82,9 +102,12 @@ function toPlainPlace(place, fallbackType) {
   return {
     placeId: place.place_id,
     name: place.name || "Unnamed place",
+    address: place.vicinity || place.formatted_address || "",
     lat,
     lng,
     type: normalizedType,
+    rating: Number.isFinite(Number(place.rating)) ? Number(place.rating) : null,
+    userRatingsTotal: Number.isFinite(Number(place.user_ratings_total)) ? Number(place.user_ratings_total) : 0,
   };
 }
 
@@ -99,11 +122,224 @@ function mergePlacesById(...lists) {
   return Array.from(map.values());
 }
 
+function sortPlacesByQuality(list) {
+  return [...(Array.isArray(list) ? list : [])].sort((a, b) => {
+    const aHasRating = Number.isFinite(Number(a?.rating));
+    const bHasRating = Number.isFinite(Number(b?.rating));
+    if (aHasRating !== bHasRating) return aHasRating ? -1 : 1;
+
+    const ratingDiff = Number(b?.rating || 0) - Number(a?.rating || 0);
+    if (Math.abs(ratingDiff) > 1e-9) return ratingDiff;
+
+    const reviewsDiff = Number(b?.userRatingsTotal || 0) - Number(a?.userRatingsTotal || 0);
+    if (reviewsDiff !== 0) return reviewsDiff;
+
+    return String(a?.name || "").localeCompare(String(b?.name || ""));
+  });
+}
+
 function cacheKeyFor(tab, center) {
   const lat = center?.lat ?? DEFAULT_CENTER.lat;
   const lng = center?.lng ?? DEFAULT_CENTER.lng;
   // Round coords to reduce duplicate queries caused by tiny GPS drift
   return `${tab}:${lat.toFixed(3)},${lng.toFixed(3)}`;
+}
+
+function getWeatherCodeLabel(code) {
+  const numericCode = Number(code);
+  if (numericCode === 0) return "Clear";
+  if ([1, 2, 3].includes(numericCode)) return "Cloudy";
+  if ([45, 48].includes(numericCode)) return "Fog";
+  if ([51, 53, 55, 56, 57].includes(numericCode)) return "Drizzle";
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(numericCode)) return "Rain";
+  if ([71, 73, 75, 77, 85, 86].includes(numericCode)) return "Snow";
+  if ([95, 96, 99].includes(numericCode)) return "Thunderstorm";
+  return "Unknown";
+}
+
+function geocodeLatLng(lat, lng) {
+  return new Promise((resolve, reject) => {
+    const geocoder = window.google?.maps ? new window.google.maps.Geocoder() : null;
+    if (!geocoder) {
+      reject(new Error("Geocoder is not available"));
+      return;
+    }
+
+    geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+      if (status !== "OK") {
+        reject(new Error(`Geocoder failed: ${status}`));
+        return;
+      }
+
+      const first = Array.isArray(results) ? results[0] : null;
+      const components = Array.isArray(first?.address_components) ? first.address_components : [];
+      const findByType = (type) =>
+        components.find((c) => Array.isArray(c?.types) && c.types.includes(type))?.long_name || "";
+
+      const city =
+        findByType("locality") ||
+        findByType("postal_town") ||
+        findByType("administrative_area_level_2") ||
+        findByType("administrative_area_level_1");
+      const country = findByType("country");
+      const label = [city, country].filter(Boolean).join(", ");
+
+      resolve(label || first?.formatted_address || "Current Location");
+    });
+  });
+}
+
+async function fetchCurrentWeather(lat, lng, options = {}) {
+  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  url.searchParams.set("latitude", String(lat));
+  url.searchParams.set("longitude", String(lng));
+  url.searchParams.set("current", "temperature_2m,weather_code");
+  url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min");
+  url.searchParams.set("timezone", "auto");
+
+  const response = await fetch(url.toString(), { signal: options.signal });
+  if (!response.ok) {
+    throw new Error(`Weather request failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  const current = data?.current ?? {};
+  const daily = data?.daily ?? {};
+
+  return {
+    label: getWeatherCodeLabel(current.weather_code),
+    temp: Number(current.temperature_2m),
+    max: Array.isArray(daily.temperature_2m_max) ? Number(daily.temperature_2m_max[0]) : NaN,
+    min: Array.isArray(daily.temperature_2m_min) ? Number(daily.temperature_2m_min[0]) : NaN,
+  };
+}
+
+function formatWeatherLine(weather) {
+  if (!weather) return "Weather unavailable";
+  const range =
+    Number.isFinite(weather.min) && Number.isFinite(weather.max)
+      ? `${Math.round(weather.min)}° - ${Math.round(weather.max)}°`
+      : Number.isFinite(weather.temp)
+        ? `${Math.round(weather.temp)}°`
+        : "";
+  return [weather.label, range].filter(Boolean).join(" | ") || "Weather unavailable";
+}
+
+function formatPrimaryTypeLabel(type) {
+  const normalized = String(type || "other").trim();
+  if (!normalized) return "Other";
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map((token) => token[0].toUpperCase() + token.slice(1))
+    .join(" ");
+}
+
+function pickNearbyReviewQuotes(rawReviews) {
+  const reviews = Array.isArray(rawReviews) ? rawReviews : [];
+  const positive = [];
+  const negative = [];
+
+  for (const item of reviews) {
+    const text = String(item?.text || "").trim();
+    const rating = Number(item?.rating);
+    const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
+    if (!text || wordCount > 150) continue;
+    if (rating >= 4 && positive.length < 1) positive.push(text);
+    if (rating <= 2 && negative.length < 1) negative.push(text);
+    if (positive.length && negative.length) break;
+  }
+
+  if (!positive.length) {
+    const firstText = reviews.map((item) => String(item?.text || "").trim()).find(Boolean);
+    if (firstText) positive.push(firstText);
+  }
+
+  return { positive, negative };
+}
+
+function normalizeNearbyPlaceDetails(place, rawDetails) {
+  const details = rawDetails || {};
+  const editorialSummary = String(details?.editorial_summary?.overview || "").trim();
+  const introText = editorialSummary || "No introduction available yet.";
+  const weekdayText = Array.isArray(details?.opening_hours?.weekday_text)
+    ? details.opening_hours.weekday_text.map((line) => String(line || "").trim()).filter(Boolean)
+    : [];
+  const reviewQuotes = pickNearbyReviewQuotes(details?.reviews);
+  const imageUrl =
+    Array.isArray(details?.photos) && typeof details.photos[0]?.getUrl === "function"
+      ? String(details.photos[0].getUrl({ maxWidth: 1200 }) || "").trim()
+      : "";
+
+  return {
+    poi: {
+      poi_id: null,
+      name: String(place?.name || "Unnamed POI").trim(),
+      type: String(place?.type || "other").trim() || "other",
+      address: String(details?.formatted_address || place?.address || "").trim(),
+      description: introText,
+      image_url: imageUrl || null,
+      lat: Number(place?.lat),
+      lng: Number(place?.lng),
+    },
+    google_place: {
+      place_id: String(details?.place_id || place?.placeId || "").trim() || null,
+      rating: Number.isFinite(Number(details?.rating)) ? Number(details.rating) : null,
+      user_ratings_total: Number.isFinite(Number(details?.user_ratings_total)) ? Number(details.user_ratings_total) : null,
+      primary_type_label: formatPrimaryTypeLabel(place?.type),
+      introduction: editorialSummary,
+      reviews: reviewQuotes,
+      review_summary: { positive: [], negative: [] },
+      contact: {
+        address: String(details?.formatted_address || place?.address || "").trim() || null,
+        phone: String(details?.formatted_phone_number || details?.international_phone_number || "").trim() || null,
+        website: String(details?.website || "").trim() || null,
+        google_maps_url: String(details?.url || "").trim() || null,
+        open_now: null,
+        opening_hours_weekday_text: weekdayText,
+      },
+    },
+    source: {
+      provider: "google_places_js",
+      cached: false,
+      cached_at: null,
+    },
+  };
+}
+
+function escapeSvgText(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function createNearbyMarkerIcon(maps, placeType) {
+  const isFood = placeType === "food";
+  const emoji = isFood ? "\u{1F35C}" : "\u{1F3DB}\uFE0F";
+  const fill = isFood ? "#f97316" : "#0ea5e9";
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="38" height="48" viewBox="0 0 38 48">
+      <defs>
+        <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.22"/>
+        </filter>
+      </defs>
+      <g filter="url(#shadow)">
+        <path d="M19 2C11.268 2 5 8.268 5 16c0 10.2 11.253 21.973 13.076 23.826a1.3 1.3 0 0 0 1.848 0C21.747 37.973 33 26.2 33 16 33 8.268 26.732 2 19 2z" fill="${fill}" stroke="#ffffff" stroke-width="2"/>
+        <circle cx="19" cy="16" r="9.2" fill="#ffffff"/>
+        <text x="19" y="20.5" text-anchor="middle" font-size="11" font-family="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif">${escapeSvgText(emoji)}</text>
+      </g>
+    </svg>
+  `.trim();
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new maps.Size(38, 48),
+    anchor: new maps.Point(19, 44),
+  };
 }
 
 export default function NearbyPage() {
@@ -117,6 +353,19 @@ export default function NearbyPage() {
   const [placesLoading, setPlacesLoading] = useState(false);
   const [placesError, setPlacesError] = useState("");
   const [places, setPlaces] = useState([]);
+  const [mapSearchCenter, setMapSearchCenter] = useState(null);
+  const [headerLocation, setHeaderLocation] = useState("Locating...");
+  const [headerWeather, setHeaderWeather] = useState(null);
+  const [headerWeatherLoading, setHeaderWeatherLoading] = useState(false);
+  const [poiDetailPanelOpen, setPoiDetailPanelOpen] = useState(false);
+  const [selectedPoiDetailTarget, setSelectedPoiDetailTarget] = useState(null);
+  const [poiDetailLoading, setPoiDetailLoading] = useState(false);
+  const [poiDetailError, setPoiDetailError] = useState("");
+  const [poiDetailData, setPoiDetailData] = useState(null);
+  const [poiDetailIntroExpanded, setPoiDetailIntroExpanded] = useState(false);
+  const [poiDetailRequestKey, setPoiDetailRequestKey] = useState("");
+  const [favoritePoiIds, setFavoritePoiIds] = useState([]);
+  const [favoriteBusyPoiId, setFavoriteBusyPoiId] = useState(null);
 
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -125,8 +374,14 @@ export default function NearbyPage() {
   const placesServiceRef = useRef(null);
   const placesCacheRef = useRef(new Map());
   const debounceTimerRef = useRef(null);
+  const locationLookupSeqRef = useRef(0);
+  const weatherLookupSeqRef = useRef(0);
+  const poiDetailRequestSeqRef = useRef(0);
+  const nearbyPlaceDetailsCacheRef = useRef(new Map());
+  const mapIdleListenerRef = useRef(null);
+  const favoritePoiIdByPlaceIdRef = useRef(new Map());
 
-  const centerForSearch = userLocation ?? DEFAULT_CENTER;
+  const centerForSearch = mapSearchCenter ?? userLocation ?? DEFAULT_CENTER;
 
   const handleLocateUser = (options = {}) => {
     const { silent = false } = options;
@@ -210,6 +465,16 @@ export default function NearbyPage() {
             mapTypeControl: false,
             streetViewControl: false,
             fullscreenControl: false,
+            cameraControl: false,
+            zoomControl: false,
+            rotateControl: false,
+            keyboardShortcuts: false,
+            gestureHandling: "greedy",
+            clickableIcons: false,
+            styles: [
+              { featureType: "poi", stylers: [{ visibility: "off" }] },
+              { featureType: "transit.station", stylers: [{ visibility: "off" }] },
+            ],
           });
         }
 
@@ -247,10 +512,76 @@ export default function NearbyPage() {
     }
     poiMarkerRefs.current = [];
 
-    // Intentionally do not render custom markers for now.
-    // Keep places data fetching/filtering so we can verify logic without UI markers.
-    poiMarkerRefs.current = [];
+    poiMarkerRefs.current = places.map((place) => {
+      const marker = new maps.Marker({
+        map,
+        position: { lat: place.lat, lng: place.lng },
+        title: place.name || "POI",
+        clickable: true,
+        icon: createNearbyMarkerIcon(maps, place.type),
+      });
+
+      marker.addListener("click", () => {
+        const target = {
+          poi: {
+            poi_id: null,
+            name: place.name || "Unnamed POI",
+            type: place.type || "other",
+            address: place.address || "",
+            lat: place.lat,
+            lng: place.lng,
+          },
+          placeId: place.placeId,
+        };
+        setSelectedPoiDetailTarget(target);
+        setPoiDetailPanelOpen(true);
+        setPoiDetailIntroExpanded(false);
+        setPoiDetailError("");
+
+        const cached = nearbyPlaceDetailsCacheRef.current.get(place.placeId);
+        setPoiDetailData(cached || null);
+        setPoiDetailLoading(!cached);
+      });
+
+      return marker;
+    });
   }, [places, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = window.google?.maps;
+    if (!mapReady || !map || !maps) return;
+
+    if (mapIdleListenerRef.current) {
+      maps.event.removeListener(mapIdleListenerRef.current);
+      mapIdleListenerRef.current = null;
+    }
+
+    const syncCenterFromMap = () => {
+      const center = map.getCenter?.();
+      const lat = center?.lat?.();
+      const lng = center?.lng?.();
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+      setMapSearchCenter((prev) => {
+        if (prev && Math.abs(prev.lat - lat) < 0.0002 && Math.abs(prev.lng - lng) < 0.0002) {
+          return prev;
+        }
+        return { lat, lng };
+      });
+    };
+
+    // Prime search center once the map is ready.
+    syncCenterFromMap();
+    mapIdleListenerRef.current = map.addListener("idle", syncCenterFromMap);
+
+    return () => {
+      if (mapIdleListenerRef.current) {
+        maps.event.removeListener(mapIdleListenerRef.current);
+        mapIdleListenerRef.current = null;
+      }
+    };
+  }, [mapReady]);
 
   useEffect(() => {
     if (!mapReady || !placesServiceRef.current) return;
@@ -289,20 +620,22 @@ export default function NearbyPage() {
             { ...baseRequest, type: "restaurant" },
             googlePlaces.PlacesServiceStatus
           );
-          nextPlaces = results
-            .slice(0, MAX_RESULTS_PER_TYPE)
-            .map((p) => toPlainPlace(p, "food"))
-            .filter(Boolean);
+          nextPlaces = sortPlacesByQuality(
+            results
+              .map((p) => toPlainPlace(p, "food"))
+              .filter(Boolean)
+          ).slice(0, MAX_RESULTS_PER_TYPE);
         } else if (tab === "attractions") {
           const results = await nearbySearch(
             service,
             { ...baseRequest, type: "tourist_attraction" },
             googlePlaces.PlacesServiceStatus
           );
-          nextPlaces = results
-            .slice(0, MAX_RESULTS_PER_TYPE)
-            .map((p) => toPlainPlace(p, "attractions"))
-            .filter(Boolean);
+          nextPlaces = sortPlacesByQuality(
+            results
+              .map((p) => toPlainPlace(p, "attractions"))
+              .filter(Boolean)
+          ).slice(0, MAX_RESULTS_PER_TYPE);
         } else {
           const foodKey = cacheKeyFor("food", centerForSearch);
           const attractionsKey = cacheKeyFor("attractions", centerForSearch);
@@ -316,10 +649,11 @@ export default function NearbyPage() {
               { ...baseRequest, type: "restaurant" },
               googlePlaces.PlacesServiceStatus
             );
-            foodPlaces = foodResults
-              .slice(0, MAX_RESULTS_PER_TYPE)
-              .map((p) => toPlainPlace(p, "food"))
-              .filter(Boolean);
+            foodPlaces = sortPlacesByQuality(
+              foodResults
+                .map((p) => toPlainPlace(p, "food"))
+                .filter(Boolean)
+            ).slice(0, MAX_RESULTS_PER_TYPE);
             placesCacheRef.current.set(foodKey, foodPlaces);
           }
 
@@ -329,14 +663,15 @@ export default function NearbyPage() {
               { ...baseRequest, type: "tourist_attraction" },
               googlePlaces.PlacesServiceStatus
             );
-            attractionPlaces = attractionResults
-              .slice(0, MAX_RESULTS_PER_TYPE)
-              .map((p) => toPlainPlace(p, "attractions"))
-              .filter(Boolean);
+            attractionPlaces = sortPlacesByQuality(
+              attractionResults
+                .map((p) => toPlainPlace(p, "attractions"))
+                .filter(Boolean)
+            ).slice(0, MAX_RESULTS_PER_TYPE);
             placesCacheRef.current.set(attractionsKey, attractionPlaces);
           }
 
-          nextPlaces = mergePlacesById(foodPlaces, attractionPlaces);
+          nextPlaces = sortPlacesByQuality(mergePlacesById(foodPlaces, attractionPlaces)).slice(0, MAX_RESULTS_ALL);
         }
 
         placesCacheRef.current.set(key, nextPlaces);
@@ -354,12 +689,242 @@ export default function NearbyPage() {
     };
   }, [tab, centerForSearch.lat, centerForSearch.lng, mapReady]);
 
-  const activeCount = places.length;
-  const activeLabel = useMemo(() => {
-    if (tab === "food") return "Food";
-    if (tab === "attractions") return "Attractions";
-    return "All";
-  }, [tab]);
+  useEffect(() => {
+    if (!mapReady) return;
+
+    const seq = ++locationLookupSeqRef.current;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const label = await geocodeLatLng(centerForSearch.lat, centerForSearch.lng);
+        if (cancelled || seq !== locationLookupSeqRef.current) return;
+        setHeaderLocation(label);
+      } catch {
+        if (cancelled || seq !== locationLookupSeqRef.current) return;
+        setHeaderLocation(userLocation ? "Current Location" : "Kuala Lumpur, Malaysia");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [centerForSearch.lat, centerForSearch.lng, mapReady, userLocation]);
+
+  useEffect(() => {
+    const seq = ++weatherLookupSeqRef.current;
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const run = async () => {
+      setHeaderWeatherLoading(true);
+      try {
+        const weather = await fetchCurrentWeather(centerForSearch.lat, centerForSearch.lng, { signal: controller.signal });
+        if (cancelled || seq !== weatherLookupSeqRef.current) return;
+        setHeaderWeather(weather);
+      } catch {
+        if (cancelled || seq !== weatherLookupSeqRef.current) return;
+        setHeaderWeather(null);
+      } finally {
+        if (!cancelled && seq === weatherLookupSeqRef.current) {
+          setHeaderWeatherLoading(false);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [centerForSearch.lat, centerForSearch.lng]);
+
+  useEffect(() => {
+    if (!poiDetailPanelOpen || !selectedPoiDetailTarget?.placeId) return;
+
+    const placeId = String(selectedPoiDetailTarget.placeId || "").trim();
+    const service = placesServiceRef.current;
+    const statusEnum = window.google?.maps?.places?.PlacesServiceStatus;
+    if (!placeId || !service || !statusEnum) return;
+
+    const cached = nearbyPlaceDetailsCacheRef.current.get(placeId);
+    if (cached) {
+      setPoiDetailData(cached);
+      setPoiDetailLoading(false);
+      setPoiDetailError("");
+      return;
+    }
+
+    const requestSeq = poiDetailRequestSeqRef.current + 1;
+    poiDetailRequestSeqRef.current = requestSeq;
+    setPoiDetailRequestKey(`${placeId}:${requestSeq}`);
+    setPoiDetailLoading(true);
+    setPoiDetailError("");
+
+    (async () => {
+      try {
+        const rawDetails = await placeDetailsRequest(
+          service,
+          {
+            placeId,
+            fields: [
+              "place_id",
+              "name",
+              "rating",
+              "user_ratings_total",
+              "types",
+              "reviews",
+              "editorial_summary",
+              "formatted_address",
+              "formatted_phone_number",
+              "international_phone_number",
+              "website",
+              "url",
+              "opening_hours",
+              "photos",
+            ],
+          },
+          statusEnum
+        );
+        if (poiDetailRequestSeqRef.current !== requestSeq) return;
+
+        const normalized = normalizeNearbyPlaceDetails(
+          {
+            placeId,
+            name: selectedPoiDetailTarget?.poi?.name,
+            address: selectedPoiDetailTarget?.poi?.address,
+            lat: selectedPoiDetailTarget?.poi?.lat,
+            lng: selectedPoiDetailTarget?.poi?.lng,
+            type: selectedPoiDetailTarget?.poi?.type,
+          },
+          rawDetails
+        );
+        nearbyPlaceDetailsCacheRef.current.set(placeId, normalized);
+        setPoiDetailData(normalized);
+      } catch (err) {
+        if (poiDetailRequestSeqRef.current !== requestSeq) return;
+        setPoiDetailError(err instanceof Error ? err.message : "Failed to load place details");
+        setPoiDetailData(
+          normalizeNearbyPlaceDetails(
+            {
+              placeId,
+              name: selectedPoiDetailTarget?.poi?.name,
+              address: selectedPoiDetailTarget?.poi?.address,
+              lat: selectedPoiDetailTarget?.poi?.lat,
+              lng: selectedPoiDetailTarget?.poi?.lng,
+              type: selectedPoiDetailTarget?.poi?.type,
+            },
+            null
+          )
+        );
+      } finally {
+        if (poiDetailRequestSeqRef.current === requestSeq) {
+          setPoiDetailLoading(false);
+        }
+      }
+    })();
+  }, [poiDetailPanelOpen, selectedPoiDetailTarget]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await getFavorites();
+        if (cancelled) return;
+        const ids = [];
+        const byPlaceId = new Map();
+        for (const row of Array.isArray(rows) ? rows : []) {
+          const poiId = Number(row?.poi_id);
+          if (Number.isInteger(poiId) && poiId > 0) ids.push(poiId);
+          const placeId = String(row?.google_place_id || "").trim();
+          if (placeId && Number.isInteger(poiId) && poiId > 0) byPlaceId.set(placeId, poiId);
+        }
+        favoritePoiIdByPlaceIdRef.current = byPlaceId;
+        setFavoritePoiIds(ids);
+      } catch {
+        if (cancelled) return;
+        setFavoritePoiIds([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleToggleFavoriteFromPoiDetail = async () => {
+    const placeId = String(selectedPoiDetailTarget?.placeId || poiDetailData?.google_place?.place_id || "").trim();
+    const knownPoiId =
+      Number(selectedPoiDetailTarget?.poi?.poi_id) ||
+      Number(poiDetailData?.poi?.poi_id) ||
+      Number(favoritePoiIdByPlaceIdRef.current.get(placeId));
+
+    const rawUser = typeof window !== "undefined" ? localStorage.getItem("smartgo_user") : null;
+    let user = null;
+    try {
+      user = rawUser ? JSON.parse(rawUser) : null;
+    } catch {
+      user = null;
+    }
+    if (!user?.user_id) {
+      setPoiDetailError("Please log in to save favorites");
+      return;
+    }
+
+    const isFavorite = Number.isInteger(knownPoiId) && favoritePoiIds.includes(knownPoiId);
+    if (isFavorite) {
+      try {
+        setFavoriteBusyPoiId(knownPoiId);
+        await deleteFavoriteApi(knownPoiId);
+        setFavoritePoiIds((prev) => prev.filter((id) => id !== knownPoiId));
+      } catch (err) {
+        setPoiDetailError(err instanceof Error ? err.message : "Failed to update favorite");
+      } finally {
+        setFavoriteBusyPoiId(null);
+      }
+      return;
+    }
+
+    try {
+      setFavoriteBusyPoiId(Number.isInteger(knownPoiId) ? knownPoiId : -1);
+      const payload = {
+        name: String(selectedPoiDetailTarget?.poi?.name || poiDetailData?.poi?.name || "").trim(),
+        type: String(selectedPoiDetailTarget?.poi?.type || poiDetailData?.poi?.type || "other").trim() || "other",
+        address: String(selectedPoiDetailTarget?.poi?.address || poiDetailData?.poi?.address || "").trim(),
+        lat: selectedPoiDetailTarget?.poi?.lat ?? poiDetailData?.poi?.lat ?? null,
+        lng: selectedPoiDetailTarget?.poi?.lng ?? poiDetailData?.poi?.lng ?? null,
+        google_place_id: placeId || null,
+        description:
+          String(poiDetailData?.google_place?.introduction || poiDetailData?.poi?.description || "").trim() || null,
+        image_url: poiDetailData?.poi?.image_url || null,
+      };
+      if (!payload.name) {
+        throw new Error("Place name is missing");
+      }
+      if (!payload.address && !payload.google_place_id) {
+        throw new Error("Place address is missing. Please wait for place details to load.");
+      }
+      const result = await createFavoriteFromPlace(payload);
+      const newPoiId = Number(result?.poi_id);
+      if (!Number.isInteger(newPoiId) || newPoiId <= 0) {
+        throw new Error("Favorite created but poi_id missing");
+      }
+      if (placeId) favoritePoiIdByPlaceIdRef.current.set(placeId, newPoiId);
+      setFavoritePoiIds((prev) => (prev.includes(newPoiId) ? prev : [newPoiId, ...prev]));
+      setSelectedPoiDetailTarget((prev) =>
+        prev ? { ...prev, poi: { ...(prev.poi || {}), poi_id: newPoiId } } : prev
+      );
+      setPoiDetailData((prev) =>
+        prev ? { ...prev, poi: { ...(prev.poi || {}), poi_id: newPoiId } } : prev
+      );
+      setPoiDetailError("");
+    } catch (err) {
+      const apiMessage = err?.response?.data?.error;
+      setPoiDetailError(apiMessage || (err instanceof Error ? err.message : "Failed to update favorite"));
+    } finally {
+      setFavoriteBusyPoiId(null);
+    }
+  };
 
   return (
     <div className="nearbyPage">
@@ -367,12 +932,14 @@ export default function NearbyPage() {
         <div className="nearbyHeader">
           <div>
             <div className="nearbyTitle">
-              Kuala Lumpur
+              {headerLocation}
               <span className="nearbyCaret">
                 <ChevronDownIcon />
               </span>
             </div>
-            <div className="muted nearbyWeather">Light Rain | 23° - 31°</div>
+            <div className="muted nearbyWeather">
+              {headerWeatherLoading ? "Loading weather..." : formatWeatherLine(headerWeather)}
+            </div>
           </div>
           <button
             className="iconBtn nearbyLocateBtn"
@@ -396,26 +963,56 @@ export default function NearbyPage() {
 
         {locateError ? <div style={locateErrorStyle}>{locateError}</div> : null}
 
-        <div style={placesHintStyle}>
-          {placesLoading ? "Loading nearby places..." : placesError ? placesError : `Showing ${activeLabel}: ${activeCount} places`}
-        </div>
-
         <div className="pillGroup nearbyPills">
           <button type="button" className={`pill ${tab === "all" ? "active" : ""}`} onClick={() => setTab("all")}>
-            All
+            {NEARBY_TYPE_META.all.emoji} {NEARBY_TYPE_META.all.label}
           </button>
           <button type="button" className={`pill ${tab === "food" ? "active" : ""}`} onClick={() => setTab("food")}>
-            Food
+            {NEARBY_TYPE_META.food.emoji} {NEARBY_TYPE_META.food.label}
           </button>
           <button
             type="button"
             className={`pill ${tab === "attractions" ? "active" : ""}`}
             onClick={() => setTab("attractions")}
           >
-            Attractions
+            {NEARBY_TYPE_META.attractions.emoji} {NEARBY_TYPE_META.attractions.label}
           </button>
         </div>
       </div>
+
+      <PoiDetailPanel
+        key={poiDetailRequestKey || String(selectedPoiDetailTarget?.placeId || "nearby-poi-detail")}
+        open={poiDetailPanelOpen}
+        isDesktop={typeof window !== "undefined" ? window.innerWidth >= 1024 : false}
+        target={selectedPoiDetailTarget}
+        loading={poiDetailLoading}
+        error={poiDetailError}
+        details={poiDetailData}
+        introExpanded={poiDetailIntroExpanded}
+        onToggleIntro={() => setPoiDetailIntroExpanded((prev) => !prev)}
+        onClose={() => {
+          setPoiDetailPanelOpen(false);
+          setPoiDetailLoading(false);
+          setPoiDetailError("");
+          setPoiDetailIntroExpanded(false);
+        }}
+        canFavorite={true}
+        isFavorite={(() => {
+          const selectedPoiId = Number(selectedPoiDetailTarget?.poi?.poi_id ?? poiDetailData?.poi?.poi_id);
+          if (Number.isInteger(selectedPoiId) && selectedPoiId > 0) {
+            return favoritePoiIds.includes(selectedPoiId);
+          }
+          const placeId = String(selectedPoiDetailTarget?.placeId || poiDetailData?.google_place?.place_id || "").trim();
+          const mappedPoiId = Number(favoritePoiIdByPlaceIdRef.current.get(placeId));
+          return Number.isInteger(mappedPoiId) && favoritePoiIds.includes(mappedPoiId);
+        })()}
+        favoriteBusy={Boolean(
+          favoriteBusyPoiId != null &&
+            (favoriteBusyPoiId === -1 ||
+              favoriteBusyPoiId === Number(selectedPoiDetailTarget?.poi?.poi_id ?? poiDetailData?.poi?.poi_id))
+        )}
+        onToggleFavorite={handleToggleFavoriteFromPoiDetail}
+      />
     </div>
   );
 }
@@ -449,16 +1046,7 @@ const locateErrorStyle = {
   boxShadow: "0 8px 20px rgba(15,23,42,0.15)",
 };
 
-const placesHintStyle = {
-  position: "absolute",
-  left: 16,
-  right: 16,
-  bottom: "calc(14px + env(safe-area-inset-bottom) + 74px + 74px)",
-  zIndex: 4,
-  textAlign: "center",
-  color: "#334155",
-  fontSize: 12,
-  fontWeight: 700,
-  textShadow: "0 1px 2px rgba(255,255,255,0.8)",
-  pointerEvents: "none",
-};
+
+
+
+

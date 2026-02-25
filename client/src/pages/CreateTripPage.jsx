@@ -5,6 +5,38 @@ import { CalendarIcon, DotIcon, SearchIcon, UserIcon } from "../components/icons
 import { createTrip, generateAiTripItinerary } from "../services/api";
 import malaysiaLocations from "../data/malaysiaLocations";
 
+function getSmartPlanProgressKey(tripId) {
+  return `smartgo_smart_plan_progress_${tripId}`;
+}
+
+function setSmartPlanProgress(tripId, progress) {
+  if (!tripId) return;
+  try {
+    localStorage.setItem(
+      getSmartPlanProgressKey(tripId),
+      JSON.stringify({
+        ...progress,
+        tripId: String(tripId),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  } catch {
+    // ignore localStorage write errors
+  }
+}
+
+function emitSmartPlanProgress(tripId, progress) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent("smartgo:smart-plan-progress", {
+        detail: { tripId: String(tripId), ...progress },
+      })
+    );
+  } catch {
+    // ignore event dispatch failures
+  }
+}
+
 const PREFS = [
   { key: "classic", label: "Classic Must-Dos" },
   { key: "food", label: "Food & Drink" },
@@ -91,10 +123,43 @@ export default function CreateTripPage() {
           return;
         }
 
-        await generateAiTripItinerary(tripId, {
-          preferences: selectedPreferenceLabels.length ? selectedPreferenceLabels : undefined,
+        setSmartPlanProgress(tripId, {
+          status: "generating",
+          message: "Smart plan is generating...",
         });
-        navigate(`/trips/${tripId}`);
+        emitSmartPlanProgress(tripId, {
+          status: "generating",
+          message: "Smart plan is generating...",
+        });
+        navigate(`/trips/${tripId}`, { state: { smartPlanGenerating: true } });
+        void generateAiTripItinerary(tripId, {
+          preferences: selectedPreferenceLabels.length ? selectedPreferenceLabels : undefined,
+        })
+          .then(() => {
+            setSmartPlanProgress(tripId, {
+              status: "completed",
+              message: "Smart plan generated.",
+            });
+            emitSmartPlanProgress(tripId, {
+              status: "completed",
+              message: "Smart plan generated.",
+            });
+          })
+          .catch((generateErr) => {
+            const message = axios.isAxiosError(generateErr)
+              ? generateErr.response?.data?.error || generateErr.message
+              : generateErr instanceof Error
+                ? generateErr.message
+                : "AI generation failed";
+            setSmartPlanProgress(tripId, {
+              status: "error",
+              message,
+            });
+            emitSmartPlanProgress(tripId, {
+              status: "error",
+              message,
+            });
+          });
         return;
       }
 

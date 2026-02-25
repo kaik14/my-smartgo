@@ -71,6 +71,12 @@ a {
   max-width: 1360px;
 }
 
+.container.nearbyFull {
+  max-width: none;
+  padding: 0;
+  gap: 0;
+}
+
 .glass {
   background: var(--card);
   border: 1px solid var(--stroke);
@@ -477,12 +483,12 @@ a {
 }
 
 .nearbyPage {
-  margin: -18px -16px -130px;
+  width: 100%;
 }
 
 .mapStage {
   position: relative;
-  min-height: calc(100vh - 8px);
+  min-height: 100vh;
   border-radius: 0;
   overflow: hidden;
   background: #eef1f6;
@@ -531,7 +537,7 @@ a {
 
 .mapCanvas {
   position: relative;
-  min-height: calc(100vh - 8px);
+  min-height: 100vh;
   background:
     radial-gradient(1000px 500px at 20% 0%, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0)),
     linear-gradient(180deg, #eceef2 0%, #e5e8ed 100%);
@@ -771,7 +777,7 @@ a {
   }
 
   .nearbyPage {
-    margin: -22px -20px -136px;
+    width: 100%;
   }
 
   .nearbyTitle {
@@ -781,6 +787,6 @@ a {
 
 @media (min-width: 1200px) {
   .nearbyPage {
-    margin: -28px -24px -140px;
+    width: 100%;
   }
 }

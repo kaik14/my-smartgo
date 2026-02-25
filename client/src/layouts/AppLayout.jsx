@@ -13,13 +13,17 @@ function NavItem({ to, label, icon }) {
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const isWide = location.pathname.startsWith("/nearby");
-  const hideBottomNav = location.pathname.startsWith("/profile");
+  const isNearbyRoute = location.pathname.startsWith("/nearby");
+  const isWide = isNearbyRoute;
+  const hideBottomNav =
+    location.pathname.startsWith("/profile") ||
+    /^\/trips\/[^/]+$/.test(location.pathname) ||
+    /^\/trips\/[^/]+\/ai-chat$/.test(location.pathname);
 
   return (
     <>
       <div className="appShell">
-        <div className={`container ${isWide ? "wide" : ""}`}>
+        <div className={`container ${isWide ? "wide" : ""} ${isNearbyRoute ? "nearbyFull" : ""}`.trim()}>
           <Outlet />
         </div>
       </div>

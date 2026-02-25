@@ -81,6 +81,26 @@ export function DotIcon({ size = 8 }) {
   );
 }
 
+export function AiChatIcon({ size = 20 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true">
+      <path
+        d="M12 3c-4.97 0-9 3.58-9 8 0 2.18.98 4.16 2.58 5.61L5 21l4.11-1.56A10.4 10.4 0 0 0 12 19c4.97 0 9-3.58 9-8s-4.03-8-9-8Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10.2 8.4 8.9 9.7l1.3 1.3M13.8 8.4l1.3 1.3-1.3 1.3M12 7.6v4.2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function EyeIcon({ size = 18 }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true">

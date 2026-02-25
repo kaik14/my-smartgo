@@ -85,13 +85,142 @@ export const generateAiTripItinerary = async (tripId, payload) => {
   return res.data;
 };
 
+export const generateAiTripDayItinerary = async (tripId, payload) => {
+  const res = await api.post(`/trips/${tripId}/ai-generate-day`, payload, {
+    timeout: 60000,
+  });
+  return res.data;
+};
+
+export const chatWithTripAssistant = async (tripId, payload) => {
+  const res = await api.post(`/trips/${tripId}/ai-chat`, payload, {
+    timeout: 60000,
+  });
+  return res.data;
+};
+
+export const patchTrip = async (tripId, payload) => {
+  const user = getLocalUser();
+  if (!user?.user_id) {
+    throw new Error("user_id is required");
+  }
+
+  const res = await api.patch(
+    `/trips/${tripId}`,
+    { ...payload, user_id: user.user_id },
+    { params: { user_id: user.user_id } }
+  );
+  return res.data;
+};
+
+export const createTripDay = async (tripId, dayNumber) => {
+  const user = getLocalUser();
+  if (!user?.user_id) {
+    throw new Error("user_id is required");
+  }
+  const res = await api.post(`/trips/${tripId}/days`, {
+    user_id: user.user_id,
+    day_number: dayNumber,
+  });
+  return res.data;
+};
+
+export const deleteTripDay = async (dayId) => {
+  const res = await api.delete(`/days/${dayId}`);
+  return res.data;
+};
+
 export const patchDayPoiNote = async (dayPoiId, note) => {
   const res = await api.patch(`/day-pois/${dayPoiId}`, { note });
   return res.data;
 };
 
+export const patchDayPoiTransportMode = async (dayPoiId, transportModeOverride) => {
+  const res = await api.patch(`/day-pois/${dayPoiId}/transport-mode`, {
+    transport_mode_override: transportModeOverride,
+  });
+  return res.data;
+};
+
+export const patchPoiImage = async (poiId, imageUrl) => {
+  const res = await api.patch(`/pois/${poiId}/image`, {
+    image_url: imageUrl ?? null,
+  });
+  return res.data;
+};
+
+export const getPoiPlaceDetails = async (poiId) => {
+  const res = await api.get(`/pois/${poiId}/place-details`, {
+    timeout: 15000,
+  });
+  return res.data;
+};
+
+export const deleteDayPoi = async (dayPoiId) => {
+  const res = await api.delete(`/day-pois/${dayPoiId}`);
+  return res.data;
+};
+
+export const reorderDayPois = async (dayId, orderedDayPoiIds) => {
+  const res = await api.patch(`/days/${dayId}/pois/reorder`, {
+    ordered_day_poi_ids: orderedDayPoiIds,
+  });
+  return res.data;
+};
+
+export const addDayPoi = async (dayId, payload) => {
+  const res = await api.post(`/days/${dayId}/pois`, payload);
+  return res.data;
+};
+
 export const clearGuestTrips = () => {
   guestTrips = [];
+};
+
+// Favorites API
+export const getFavorites = async () => {
+  const user = getLocalUser();
+  if (!user?.user_id) return [];
+  const res = await api.get("/favorites", {
+    params: { user_id: user.user_id },
+  });
+  return res.data;
+};
+
+export const createFavorite = async (poiId) => {
+  const user = getLocalUser();
+  if (!user?.user_id) {
+    throw new Error("user_id is required");
+  }
+  const res = await api.post("/favorites", {
+    user_id: user.user_id,
+    poi_id: poiId,
+  });
+  return res.data;
+};
+
+export const createFavoriteFromPlace = async (payload) => {
+  const user = getLocalUser();
+  if (!user?.user_id) {
+    throw new Error("user_id is required");
+  }
+  const res = await api.post("/favorites/from-place", {
+    user_id: user.user_id,
+    ...payload,
+  });
+  return res.data;
+};
+
+export const deleteFavorite = async (poiId) => {
+  const user = getLocalUser();
+  if (!user?.user_id) {
+    throw new Error("user_id is required");
+  }
+  const res = await api.delete(`/favorites/${poiId}`, {
+    params: { user_id: user.user_id },
+    data: { user_id: user.user_id },
+  });
+  return res.data;
 };
 
 // Auth API

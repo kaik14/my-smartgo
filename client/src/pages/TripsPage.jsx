@@ -4,6 +4,19 @@ import TripCard from "../components/TripCard";
 import { SearchIcon, UserIcon } from "../components/icons";
 import { getTrips } from "../services/api";
 
+function getTripCoverCacheKey(tripId) {
+  return `smartgo_trip_cover_image_${tripId}`;
+}
+
+function readTripCoverImage(tripId) {
+  if (!tripId) return "";
+  try {
+    return String(localStorage.getItem(getTripCoverCacheKey(tripId)) || "");
+  } catch {
+    return "";
+  }
+}
+
 export default function TripsPage() {
   const navigate = useNavigate();
   const [trips, setTrips] = useState([]);
@@ -44,10 +57,11 @@ export default function TripsPage() {
           trips.map((trip, idx) => {
             const variants = ["mint", "green", "peach", ""];
             const variant = variants[idx % variants.length];
+            const coverImage = readTripCoverImage(trip.trip_id);
             return (
               <TripCard
                 key={trip.trip_id}
-                trip={trip}
+                trip={{ ...trip, cover_image_url: trip.cover_image_url || coverImage || null }}
                 variant={variant}
                 onClick={() => navigate(`/trips/${trip.trip_id}`)}
               />
