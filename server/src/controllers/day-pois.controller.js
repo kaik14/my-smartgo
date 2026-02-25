@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import { getPoiPlaceDetailsWithCache } from "../services/googlePlacesDetailsService.js";
+import { isLikelyMalaysiaCoordinates } from "../utils/malaysiaGeo.js";
 
 const AUTO_REORDER_GAP_MIN = 20;
 
@@ -338,6 +339,9 @@ export async function addDayPoi(req, res) {
     }
     if (lng !== null && !Number.isFinite(lng)) {
       return res.status(400).json({ error: "lng must be a number or null" });
+    }
+    if (lat !== null && lng !== null && !isLikelyMalaysiaCoordinates(lat, lng)) {
+      return res.status(400).json({ error: "Only Malaysia POIs are allowed" });
     }
 
     connection = await pool.getConnection();

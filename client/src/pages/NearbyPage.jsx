@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDownIcon, LocationArrowIcon } from "../components/icons";
 import PoiDetailPanel from "../components/PoiDetailPanel";
 import { createFavoriteFromPlace, deleteFavorite as deleteFavoriteApi, getFavorites } from "../services/api";
+import { isLikelyMalaysiaCoordinates, MALAYSIA_MAP_BOUNDS } from "../utils/malaysiaGeo";
 
 const DEFAULT_CENTER = { lat: 3.139, lng: 101.6869 };
 const SEARCH_RADIUS_METERS = 2500;
@@ -92,6 +93,7 @@ function toPlainPlace(place, fallbackType) {
   const lat = place.geometry?.location?.lat?.();
   const lng = place.geometry?.location?.lng?.();
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (!isLikelyMalaysiaCoordinates(lat, lng)) return null;
 
   const normalizedType = place.types?.includes("restaurant") || place.types?.includes("cafe")
     ? "food"
@@ -235,23 +237,55 @@ function formatPrimaryTypeLabel(type) {
     .join(" ");
 }
 
+function looksEnglishReviewText(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  const asciiChars = value.replace(/[^\x00-\x7F]/g, "");
+  const asciiRatio = asciiChars.length / value.length;
+  if (asciiRatio < 0.85) return false;
+  return /\b(the|and|is|was|very|great|nice|good|place|visit)\b/i.test(value) || asciiRatio > 0.98;
+}
+
 function pickNearbyReviewQuotes(rawReviews) {
-  const reviews = Array.isArray(rawReviews) ? rawReviews : [];
+  const reviews = (Array.isArray(rawReviews) ? rawReviews : [])
+    .map((item) => {
+      const text = String(item?.text || "").trim();
+      const rating = Number(item?.rating);
+      const language = String(item?.language || "").trim().toLowerCase();
+      const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
+      return {
+        text,
+        rating,
+        wordCount,
+        isEnglish: language === "en" || looksEnglishReviewText(text),
+      };
+    })
+    .filter((item) => item.text && item.wordCount <= 150);
+
   const positive = [];
   const negative = [];
+  const sortedByShortness = [...reviews].sort(
+    (a, b) => a.wordCount - b.wordCount || a.text.length - b.text.length
+  );
 
   for (const item of reviews) {
-    const text = String(item?.text || "").trim();
-    const rating = Number(item?.rating);
-    const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
-    if (!text || wordCount > 150) continue;
-    if (rating >= 4 && positive.length < 1) positive.push(text);
-    if (rating <= 2 && negative.length < 1) negative.push(text);
+    if (item.rating >= 4 && item.isEnglish && positive.length < 1) positive.push(item.text);
+    if (item.rating <= 2 && item.isEnglish && negative.length < 1) negative.push(item.text);
     if (positive.length && negative.length) break;
   }
 
   if (!positive.length) {
-    const firstText = reviews.map((item) => String(item?.text || "").trim()).find(Boolean);
+    const shortPositive = sortedByShortness.find((item) => item.rating >= 4);
+    if (shortPositive) positive.push(shortPositive.text);
+  }
+
+  if (!negative.length) {
+    const shortNegative = sortedByShortness.find((item) => item.rating <= 2);
+    if (shortNegative) negative.push(shortNegative.text);
+  }
+
+  if (!positive.length) {
+    const firstText = sortedByShortness[0]?.text;
     if (firstText) positive.push(firstText);
   }
 
@@ -408,6 +442,11 @@ export default function NearbyPage() {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         };
+        if (!isLikelyMalaysiaCoordinates(nextCenter.lat, nextCenter.lng)) {
+          setLocateError("This app currently supports Malaysia only");
+          setLocating(false);
+          return;
+        }
 
         setUserLocation(nextCenter);
         map.panTo(nextCenter);
@@ -471,6 +510,10 @@ export default function NearbyPage() {
             keyboardShortcuts: false,
             gestureHandling: "greedy",
             clickableIcons: false,
+            restriction: {
+              latLngBounds: MALAYSIA_MAP_BOUNDS,
+              strictBounds: true,
+            },
             styles: [
               { featureType: "poi", stylers: [{ visibility: "off" }] },
               { featureType: "transit.station", stylers: [{ visibility: "off" }] },
@@ -674,6 +717,9 @@ export default function NearbyPage() {
           nextPlaces = sortPlacesByQuality(mergePlacesById(foodPlaces, attractionPlaces)).slice(0, MAX_RESULTS_ALL);
         }
 
+        if (!nextPlaces.length && !isLikelyMalaysiaCoordinates(centerForSearch.lat, centerForSearch.lng)) {
+          setPlacesError("No Malaysia POIs found in this area. Move the map to Malaysia.");
+        }
         placesCacheRef.current.set(key, nextPlaces);
         setPlaces(nextPlaces);
       } catch (err) {
@@ -958,6 +1004,8 @@ export default function NearbyPage() {
             <div style={mapOverlayStyle}>Loading map...</div>
           ) : mapError ? (
             <div style={mapOverlayStyle}>{mapError}</div>
+          ) : !mapLoading && !mapError && placesError ? (
+            <div style={mapOverlayStyle}>{placesError}</div>
           ) : null}
         </div>
 

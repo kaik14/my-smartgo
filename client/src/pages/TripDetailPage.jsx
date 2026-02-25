@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import { AiChatIcon } from "../components/icons";
@@ -21,7 +21,7 @@ import {
   patchTrip,
   reorderDayPois,
 } from "../services/api";
-
+import { isLikelyMalaysiaCoordinates, MALAYSIA_MAP_BOUNDS } from "../utils/malaysiaGeo";
 function formatDateRange(startDate, endDate) {
   if (!startDate || !endDate) return "";
   const start = new Date(startDate);
@@ -51,7 +51,7 @@ function formatTripWeatherDate(dateText) {
   if (!dateText) return "";
   const date = new Date(`${dateText}T00:00:00`);
   if (Number.isNaN(date.getTime())) return dateText;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", weekday: "short" });
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "short" });
 }
 
 function getWeatherCodeLabel(code) {
@@ -222,7 +222,7 @@ function loadGoogleMapsApi(apiKey) {
     }
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=en&region=MY`;
     script.async = true;
     script.defer = true;
     script.dataset.googleMapsSdk = "true";
@@ -277,6 +277,7 @@ function toRecommendedPlace(place, fallbackType) {
   const lat = place.geometry?.location?.lat?.();
   const lng = place.geometry?.location?.lng?.();
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (!isLikelyMalaysiaCoordinates(lat, lng)) return null;
   const normalizedType = place.types?.includes("restaurant") || place.types?.includes("cafe")
     ? "food"
     : place.types?.includes("tourist_attraction") || place.types?.includes("museum")
@@ -356,23 +357,59 @@ function formatPrimaryTypeLabelLocal(type) {
     .join(" ");
 }
 
+function looksEnglishReviewTextLocal(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  const asciiChars = value.replace(/[^\x00-\x7F]/g, "");
+  const asciiRatio = asciiChars.length / value.length;
+  if (asciiRatio < 0.85) return false;
+  return /\b(the|and|is|was|very|great|nice|good|place|visit)\b/i.test(value) || asciiRatio > 0.98;
+}
+
 function pickPanelReviewQuotesLocal(rawReviews) {
-  const reviews = Array.isArray(rawReviews) ? rawReviews : [];
+  const reviews = (Array.isArray(rawReviews) ? rawReviews : [])
+    .map((item) => {
+      const text = String(item?.text || "").trim();
+      const rating = Number(item?.rating);
+      const language = String(item?.language || "").trim().toLowerCase();
+      const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
+      return {
+        text,
+        rating,
+        language,
+        wordCount,
+        isEnglish: language === "en" || looksEnglishReviewTextLocal(text),
+      };
+    })
+    .filter((item) => item.text && item.wordCount <= 150);
+
   const positive = [];
   const negative = [];
+  const sortedByShortness = [...reviews].sort(
+    (a, b) => a.wordCount - b.wordCount || a.text.length - b.text.length
+  );
+
   for (const item of reviews) {
-    const text = String(item?.text || "").trim();
-    const rating = Number(item?.rating);
-    const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
-    if (!text || wordCount > 150) continue;
-    if (rating >= 4 && positive.length < 1) positive.push(text);
-    if (rating <= 2 && negative.length < 1) negative.push(text);
+    if (item.rating >= 4 && item.isEnglish && positive.length < 1) positive.push(item.text);
+    if (item.rating <= 2 && item.isEnglish && negative.length < 1) negative.push(item.text);
     if (positive.length && negative.length) break;
   }
+
   if (!positive.length) {
-    const first = reviews.map((item) => String(item?.text || "").trim()).find(Boolean);
+    const shortPositive = sortedByShortness.find((item) => item.rating >= 4);
+    if (shortPositive) positive.push(shortPositive.text);
+  }
+
+  if (!negative.length) {
+    const shortNegative = sortedByShortness.find((item) => item.rating <= 2);
+    if (shortNegative) negative.push(shortNegative.text);
+  }
+
+  if (!positive.length) {
+    const first = sortedByShortness[0]?.text;
     if (first) positive.push(first);
   }
+
   return { positive, negative };
 }
 
@@ -1083,7 +1120,7 @@ export default function TripDetailPage() {
 
     if (!tripWeatherCoords) {
       setTripWeatherDays([]);
-      setTripWeatherError("Add a POI with coordinates to load weather.");
+      setTripWeatherError("Weather will appear after the trip is generated.");
       setTripWeatherLoading(false);
       return;
     }
@@ -1692,6 +1729,10 @@ export default function TripDetailPage() {
             keyboardShortcuts: false,
             gestureHandling: "greedy",
             clickableIcons: false,
+            restriction: {
+              latLngBounds: MALAYSIA_MAP_BOUNDS,
+              strictBounds: true,
+            },
             styles: [
               { featureType: "poi", stylers: [{ visibility: "off" }] },
               { featureType: "transit.station", stylers: [{ visibility: "off" }] },
@@ -1895,6 +1936,9 @@ export default function TripDetailPage() {
         });
 
         const next = sortPlacesByQualityLocal(filtered).slice(0, TRIP_RECOMMEND_MAX_RESULTS);
+        if (!next.length && !isLikelyMalaysiaCoordinates(lat, lng)) {
+          setRecommendedPoisError("No Malaysia POIs found in this area. Move the map to Malaysia.");
+        }
         recommendedSearchCacheRef.current.set(cacheKey, next);
         setRecommendedPois(next);
       } catch (err) {
@@ -2378,11 +2422,16 @@ export default function TripDetailPage() {
                   ? "attraction"
                   : "other",
         }))
-        .filter((item) => item.name && item.address);
+        .filter((item) => item.name && item.address)
+        .filter((item) => isLikelyMalaysiaCoordinates(item.lat, item.lng));
 
       setPoiSearchResults(normalized);
       if (!normalized.length) {
-        setPoiSearchError("No places found");
+        setPoiSearchError(
+          isLikelyMalaysiaCoordinates(locationHint.lat, locationHint.lng)
+            ? "No places found"
+            : "No Malaysia POIs found in this area. Move the map to Malaysia."
+        );
       }
     } catch (err) {
       setPoiSearchError(err instanceof Error ? err.message : "Failed to search places");
@@ -2694,7 +2743,7 @@ export default function TripDetailPage() {
                 aria-label="Trip actions"
                 style={tripMenuButtonStyle}
               >
-                �?
+                {"\u22EE"}
               </button>
               {tripMenuOpen ? (
                 <div style={tripMenuCardStyle}>
@@ -2879,7 +2928,7 @@ export default function TripDetailPage() {
                             </div>
                             {routeEditMode ? (
                               <div style={dragHandleStyle} aria-hidden="true" title="Drag to reorder">
-                                ⋮⋮
+                                {"\u22EE\u22EE"}
                               </div>
                             ) : null}
                             <div style={{ minWidth: 28, fontWeight: 700, color: "#0f172a" }}>
@@ -2925,7 +2974,7 @@ export default function TripDetailPage() {
                                   style={noteButtonStyle(Boolean(poi.note))}
                                   aria-label="Edit note"
                                 >
-                                  {poi.note ? poi.note : "备注"}
+                                  {poi.note ? poi.note : "澶囨敞"}
                                 </button>
                               ) : null}
 
@@ -2959,87 +3008,139 @@ export default function TripDetailPage() {
               </div>
             )}
 
-            <div style={tripInfoSplitRowStyle}>
-              <section style={{ ...sectionCardStyle, ...tripInfoHalfCardStyle }}>
-                <div className="row" style={{ marginBottom: 8, alignItems: "center", gap: 8 }}>
-                  <div style={{ fontWeight: 700 }}>Trip Note</div>
-                  {editingTripNote ? (
-                    <div className="row" style={{ gap: 8 }}>
+            {isOverviewTab ? (
+              <div style={tripInfoSplitRowStyle}>
+                <section
+                  style={{
+                    ...sectionCardStyle,
+                    ...tripInfoHalfCardStyle,
+                    display: "flex",
+                    flexDirection: "column",
+                    position: "relative",
+                  }}
+                >
+                  <div
+                    className="row"
+                    style={{
+                      marginBottom: 8,
+                      alignItems: "center",
+                      gap: 8,
+                      paddingRight: editingTripNote ? 150 : 72,
+                    }}
+                  >
+                    <div style={{ fontWeight: 700 }}>Trip Note</div>
+                    {editingTripNote ? (
+                      <div className="row" style={{ gap: 8, position: "absolute", top: 10, right: 14 }}>
+                        <button
+                          type="button"
+                          className="secondaryBtn"
+                          onClick={handleCancelEditTripNote}
+                          disabled={savingTripNote}
+                          style={{
+                            height: 30,
+                            minHeight: 30,
+                            minWidth: 0,
+                            padding: "0 10px",
+                            fontSize: 12,
+                            borderRadius: 999,
+                            lineHeight: 1,
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="primaryBtn"
+                          onClick={handleSaveTripNote}
+                          disabled={savingTripNote}
+                          style={{
+                            height: 30,
+                            minHeight: 30,
+                            minWidth: 0,
+                            padding: "0 10px",
+                            fontSize: 12,
+                            borderRadius: 999,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {savingTripNote ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                    ) : (
                       <button
                         type="button"
                         className="secondaryBtn"
-                        onClick={handleCancelEditTripNote}
-                        disabled={savingTripNote}
+                        onClick={handleStartEditTripNote}
+                        style={{
+                          position: "absolute",
+                          top: 10,
+                          right: 14,
+                          height: 30,
+                          minHeight: 30,
+                          minWidth: 0,
+                          padding: "0 10px",
+                          fontSize: 12,
+                          borderRadius: 999,
+                          lineHeight: 1,
+                        }}
                       >
-                        Cancel
+                        Edit
                       </button>
-                      <button
-                        type="button"
-                        className="primaryBtn"
-                        onClick={handleSaveTripNote}
-                        disabled={savingTripNote}
-                      >
-                        {savingTripNote ? "Saving..." : "Save"}
-                      </button>
-                    </div>
+                    )}
+                  </div>
+                  {tripNoteError ? <div style={{ ...errorTextStyle, marginBottom: 8 }}>{tripNoteError}</div> : null}
+                  {editingTripNote ? (
+                    <textarea
+                      value={tripNoteDraft}
+                      onChange={(e) => setTripNoteDraft(e.target.value)}
+                      rows={4}
+                      style={textareaStyle}
+                      disabled={savingTripNote}
+                      placeholder="Add a note for this trip..."
+                    />
                   ) : (
-                    <button type="button" className="secondaryBtn" onClick={handleStartEditTripNote}>
-                      Edit
-                    </button>
+                    <div style={tripNoteTextStyle}>
+                      {String(trip.note || "").trim() || "No trip note yet"}
+                    </div>
                   )}
-                </div>
-                {tripNoteError ? <div style={{ ...errorTextStyle, marginBottom: 8 }}>{tripNoteError}</div> : null}
-                {editingTripNote ? (
-                  <textarea
-                    value={tripNoteDraft}
-                    onChange={(e) => setTripNoteDraft(e.target.value)}
-                    rows={4}
-                    style={textareaStyle}
-                    disabled={savingTripNote}
-                    placeholder="Add a note for this trip..."
-                  />
-                ) : (
-                  <div style={tripNoteTextStyle}>
-                    {String(trip.note || "").trim() || "No trip note yet"}
-                  </div>
-                )}
-              </section>
+                </section>
 
-              <section style={{ ...sectionCardStyle, ...tripInfoHalfCardStyle }}>
-                <div className="row" style={{ marginBottom: 8, alignItems: "center", gap: 8 }}>
-                  <div style={{ fontWeight: 700 }}>Trip Weather</div>
-                  <div className="muted" style={{ fontSize: 12 }}>
-                    {trip?.start_date && trip?.end_date ? `${trip.start_date} to ${trip.end_date}` : ""}
+                <section style={{ ...sectionCardStyle, ...tripInfoHalfCardStyle }}>
+                  <div className="row" style={{ marginBottom: 8, alignItems: "center", gap: 8 }}>
+                    <div style={{ fontWeight: 700 }}>Trip Weather</div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {trip?.start_date && trip?.end_date ? `${trip.start_date} to ${trip.end_date}` : ""}
+                    </div>
                   </div>
-                </div>
 
-                {tripWeatherLoading ? <div className="muted">Loading weather...</div> : null}
-                {!tripWeatherLoading && tripWeatherError ? (
-                  <div style={{ ...errorTextStyle, marginBottom: 8 }}>{tripWeatherError}</div>
-                ) : null}
-                {!tripWeatherLoading && !tripWeatherError && !tripWeatherDays.length ? (
-                  <div className="muted">No weather data</div>
-                ) : null}
-                {!tripWeatherLoading && tripWeatherDays.length ? (
-                  <div style={tripWeatherListStyle}>
-                    {tripWeatherDays.map((item) => (
-                      <div key={item.date} style={tripWeatherItemStyle}>
-                        <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
-                          {formatTripWeatherDate(item.date)}
+                  {tripWeatherLoading ? <div className="muted">Loading weather...</div> : null}
+                  {!tripWeatherLoading && tripWeatherError ? (
+                    <div style={{ ...errorTextStyle, marginBottom: 8 }}>{tripWeatherError}</div>
+                  ) : null}
+                  {!tripWeatherLoading && !tripWeatherError && !tripWeatherDays.length ? (
+                    <div className="muted">No weather data</div>
+                  ) : null}
+                  {!tripWeatherLoading && tripWeatherDays.length ? (
+                    <div style={tripWeatherListStyle}>
+                      {tripWeatherDays.map((item) => (
+                        <div key={item.date} style={tripWeatherItemStyle}>
+                          <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>
+                            {formatTripWeatherDate(item.date)}
+                          </div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {getWeatherCodeLabel(item.weatherCode)}
+                          </div>
+                          <div style={{ fontSize: 13, color: "#334155", fontWeight: 600 }}>
+                            {Number.isFinite(item.min) ? Math.round(item.min) : "-"}{"\u00B0C"} ~{" "}
+                            {Number.isFinite(item.max) ? Math.round(item.max) : "-"}{"\u00B0C"}
+                          </div>
                         </div>
-                        <div className="muted" style={{ fontSize: 12 }}>
-                          {getWeatherCodeLabel(item.weatherCode)}
-                        </div>
-                        <div style={{ fontSize: 13, color: "#334155", fontWeight: 600 }}>
-                          {Number.isFinite(item.min) ? Math.round(item.min) : "-"}° ~{" "}
-                          {Number.isFinite(item.max) ? Math.round(item.max) : "-"}°
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-            </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+              </div>
+            ) : null}
           </div>
         </section>
       </div>
@@ -3115,7 +3216,7 @@ export default function TripDetailPage() {
             <textarea
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
-              placeholder="输入 POI 备注"
+              placeholder="杈撳叆 POI 澶囨敞"
               rows={5}
               style={textareaStyle}
               disabled={savingNote}
@@ -3340,8 +3441,9 @@ const tripNoteTextStyle = {
   background: "rgba(248,250,252,0.95)",
   border: "1px solid rgba(148,163,184,0.18)",
   borderRadius: 12,
-  padding: "12px 14px",
-  minHeight: 72,
+  padding: "10px 12px",
+  minHeight: 112,
+  flex: 1,
   whiteSpace: "pre-wrap",
 };
 
@@ -3827,6 +3929,7 @@ const recommendedToggleHintStyle = {
   padding: "6px 10px",
   boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
 };
+
 
 
 

@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { isLikelyMalaysiaCoordinates } from "../utils/malaysiaGeo.js";
 
 function getUserId(req) {
   const raw = req.headers["x-user-id"] ?? req.query?.user_id ?? req.body?.user_id;
@@ -59,6 +60,9 @@ async function ensurePoiForFavoriteByPlace(payload) {
   if (!address) throw new Error("address is required");
   if (lat != null && !Number.isFinite(lat)) throw new Error("lat must be a number");
   if (lng != null && !Number.isFinite(lng)) throw new Error("lng must be a number");
+  if (lat != null && lng != null && !isLikelyMalaysiaCoordinates(lat, lng)) {
+    throw new Error("Only Malaysia POIs are allowed");
+  }
 
   let rows;
   if (googlePlaceId) {

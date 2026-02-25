@@ -7,6 +7,7 @@ import {
   generateTripAssistantReply,
 } from "../services/geminiItineraryService.js";
 import { geocodePoiCoordinates, getDestinationCoverImageUrl } from "../services/googleGeocodingService.js";
+import { hasValidCoordinates, isLikelyMalaysiaCoordinates } from "../utils/malaysiaGeo.js";
 
 function getUserId(req) {
   const raw = req.body?.user_id ?? req.query?.user_id ?? req.headers["x-user-id"];
@@ -44,19 +45,6 @@ function normalizeTripPreferences(input) {
   }
 
   return null;
-}
-
-function hasValidCoordinates(lat, lng) {
-  return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng));
-}
-
-function isLikelyMalaysiaCoordinates(lat, lng) {
-  const latNum = Number(lat);
-  const lngNum = Number(lng);
-  if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) return false;
-
-  // Covers Peninsular + East Malaysia with a small buffer.
-  return latNum >= 0 && latNum <= 8.5 && lngNum >= 99 && lngNum <= 120;
 }
 
 async function backfillMissingTripPoiCoordinates(rows, destination, tripId) {

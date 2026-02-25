@@ -86,6 +86,10 @@ function getWordCount(text) {
     .length;
 }
 
+function compareReviewBrevity(a, b) {
+  return getWordCount(a?.text) - getWordCount(b?.text) || String(a?.text || "").length - String(b?.text || "").length;
+}
+
 function tokenizeKeywords(text) {
   return String(text || "")
     .toLowerCase()
@@ -291,7 +295,8 @@ function pickReviewQuotes(rawReviews) {
   if (positive.length === 0) {
     const rankedHigh = [...reviews].sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
     for (const pass of [true, false]) {
-      for (const item of rankedHigh) {
+      const rankedHighPool = pass ? rankedHigh : [...rankedHigh].sort(compareReviewBrevity);
+      for (const item of rankedHighPool) {
         if (positive.length >= MAX_QUOTES_PER_BUCKET) break;
         if (pass && !isEnglishReview(item)) continue;
         if (looksStrongNegative(item.text)) continue;
@@ -305,7 +310,8 @@ function pickReviewQuotes(rawReviews) {
       .filter((item) => Number.isFinite(item.rating) && item.rating <= 3)
       .sort((a, b) => (Number(a.rating) || 0) - (Number(b.rating) || 0));
     for (const pass of [true, false]) {
-      for (const item of rankedLow) {
+        const rankedLowPool = pass ? rankedLow : [...rankedLow].sort(compareReviewBrevity);
+        for (const item of rankedLowPool) {
         if (negative.length >= MAX_QUOTES_PER_BUCKET) break;
         if (pass && !isEnglishReview(item)) continue;
         appendUnique(negative, negativeSeen, item);
@@ -325,7 +331,8 @@ function pickReviewQuotes(rawReviews) {
         .filter((item) => Number.isFinite(item.rating) && item.rating <= 3)
         .sort((a, b) => (Number(a.rating) || 0) - (Number(b.rating) || 0));
       for (const pass of [true, false]) {
-        for (const item of rankedLow) {
+        const rankedLowPool = pass ? rankedLow : [...rankedLow].sort(compareReviewBrevity);
+        for (const item of rankedLowPool) {
           if (negative.length >= MAX_QUOTES_PER_BUCKET) break;
           if (pass && !isEnglishReview(item)) continue;
           const lower = item.text.toLowerCase();
