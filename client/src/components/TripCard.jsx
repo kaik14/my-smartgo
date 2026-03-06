@@ -1,16 +1,10 @@
-import { useEffect, useState } from "react";
-
-export default function TripCard({ trip, variant = "mint", onClick }) {
+export default function TripCard({ trip, variant = "mint", onClick, onCoverError }) {
   const start = new Date(trip.start_date);
   const end = new Date(trip.end_date);
   const days = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1);
   const nights = Math.max(0, days - 1);
   const fallbackCover = "https://images.unsplash.com/photo-1526481280695-3c687fd5432c?auto=format&fit=crop&w=400&q=60";
-  const [imgSrc, setImgSrc] = useState(trip.cover_image_url || fallbackCover);
-
-  useEffect(() => {
-    setImgSrc(trip.cover_image_url || fallbackCover);
-  }, [trip.cover_image_url]);
+  const coverImageUrl = trip.cover_image_url || fallbackCover;
 
   return (
     <div
@@ -44,9 +38,12 @@ export default function TripCard({ trip, variant = "mint", onClick }) {
       <div className="tripImg">
         <img
           alt="trip"
-          src={imgSrc}
-          onError={() => {
-            if (imgSrc !== fallbackCover) setImgSrc(fallbackCover);
+          src={coverImageUrl}
+          onError={(e) => {
+            const failedSrc = String(e.currentTarget?.src || "").trim();
+            if (!failedSrc || failedSrc === fallbackCover) return;
+            onCoverError?.(trip, failedSrc);
+            e.currentTarget.src = fallbackCover;
           }}
         />
       </div>
