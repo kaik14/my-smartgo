@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import TripCard from "../components/TripCard";
-import { SearchIcon, UserIcon } from "../components/icons";
+import { UserIcon } from "../components/icons";
 import { getTrips, patchTrip } from "../services/api";
 
 function getTripCoverCacheKey(tripId) {
@@ -184,9 +184,6 @@ export default function TripsPage() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button className="iconBtn" aria-label="search">
-            <SearchIcon />
-          </button>
           <button className="iconBtn" aria-label="profile" onClick={() => navigate("/profile")}>
             <UserIcon />
           </button>

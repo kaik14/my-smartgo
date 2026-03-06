@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeftIcon } from "../components/icons";
 import PoiDetailPanel from "../components/PoiDetailPanel";
@@ -8,7 +8,114 @@ import {
   deleteFavorite as deleteFavoriteApi,
   getFavorites,
   getPoiPlaceDetails,
+  patchPoiImage,
 } from "../services/api";
+
+const DEFAULT_MAP_CENTER = { lat: 3.139, lng: 101.6869 };
+let googleMapsLoaderPromise = null;
+
+function getPoiImageCacheKey(poi) {
+  if (poi?.poi_id) return `poi:${poi.poi_id}`;
+  const name = String(poi?.name || "").trim().toLowerCase();
+  const address = String(poi?.address || "").trim().toLowerCase();
+  return `poi:${name}|${address}`;
+}
+
+function loadGoogleMapsApi(apiKey) {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("Window is not available"));
+  }
+  if (window.google?.maps?.places) {
+    return Promise.resolve(window.google.maps);
+  }
+  if (googleMapsLoaderPromise) {
+    return googleMapsLoaderPromise;
+  }
+
+  googleMapsLoaderPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector('script[data-google-maps-sdk="true"]');
+    if (existingScript) {
+      existingScript.addEventListener("load", () => {
+        if (window.google?.maps?.places) resolve(window.google.maps);
+        else reject(new Error("Google Maps SDK loaded but unavailable"));
+      });
+      existingScript.addEventListener("error", () => reject(new Error("Failed to load Google Maps SDK")));
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=en&region=MY`;
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleMapsSdk = "true";
+    script.onload = () => {
+      if (window.google?.maps?.places) resolve(window.google.maps);
+      else reject(new Error("Google Maps SDK loaded but unavailable"));
+    };
+    script.onerror = () => reject(new Error("Failed to load Google Maps SDK"));
+    document.head.appendChild(script);
+  });
+
+  return googleMapsLoaderPromise;
+}
+
+function textSearchPlaces(service, request, statusEnum) {
+  return new Promise((resolve, reject) => {
+    service.textSearch(request, (results, status) => {
+      if (status === statusEnum.OK || status === statusEnum.ZERO_RESULTS) {
+        resolve(results || []);
+        return;
+      }
+      reject(new Error(`Places search failed: ${status}`));
+    });
+  });
+}
+
+function getPlacePhotoUrl(place, maxWidth = 220) {
+  const photos = Array.isArray(place?.photos) ? place.photos : [];
+  const first = photos[0];
+  if (!first || typeof first.getUrl !== "function") return "";
+  try {
+    return String(first.getUrl({ maxWidth })) || "";
+  } catch {
+    return "";
+  }
+}
+
+function canLoadImageUrl(url, timeoutMs = 7000) {
+  return new Promise((resolve) => {
+    const text = String(url || "").trim();
+    if (!text) {
+      resolve(false);
+      return;
+    }
+
+    const img = new Image();
+    let finished = false;
+    const done = (ok) => {
+      if (finished) return;
+      finished = true;
+      resolve(ok);
+    };
+
+    const timeoutId = setTimeout(() => done(false), timeoutMs);
+    img.onload = () => {
+      clearTimeout(timeoutId);
+      done(true);
+    };
+    img.onerror = () => {
+      clearTimeout(timeoutId);
+      done(false);
+    };
+    img.src = text;
+  });
+}
+
+function isLikelyExpiringGooglePhotoUrl(url) {
+  const text = String(url || "").trim().toLowerCase();
+  if (!text) return false;
+  return text.includes("maps.googleapis.com/maps/api/place/photo") || text.includes("googleusercontent.com");
+}
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -22,6 +129,10 @@ export default function ProfilePage() {
   const [favoritePoiIntroExpanded, setFavoritePoiIntroExpanded] = useState(false);
   const [favoriteBusyPoiId, setFavoriteBusyPoiId] = useState(null);
   const [poiImageCache, setPoiImageCache] = useState({});
+  const placesServiceRef = useRef(null);
+  const poiImageRepairInFlightRef = useRef(new Set());
+  const poiThumbValidationCheckedRef = useRef(new Set());
+  const poiAutoHealAttemptedRef = useRef(new Set());
 
   const user = useMemo(() => {
     // TODO: replace localStorage fallback with authenticated user API data.
@@ -73,6 +184,161 @@ export default function ProfilePage() {
     }
   }, []);
 
+  const writePoiImageCache = (next) => {
+    try {
+      localStorage.setItem("smartgo_poi_image_cache_v1", JSON.stringify(next));
+      setPoiImageCache(next);
+    } catch {
+      // ignore localStorage quota errors
+    }
+  };
+
+  const ensurePlacesService = async () => {
+    if (placesServiceRef.current) return placesServiceRef.current;
+    const apiKey = String(import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "").trim();
+    if (!apiKey) return null;
+    await loadGoogleMapsApi(apiKey);
+    if (!window.google?.maps?.places?.PlacesService) return null;
+    placesServiceRef.current = new window.google.maps.places.PlacesService(document.createElement("div"));
+    return placesServiceRef.current;
+  };
+
+  const healFavoritePoiImage = async (poi, failedUrl = "") => {
+    const cacheKey = getPoiImageCacheKey(poi);
+    if (!cacheKey || poiImageRepairInFlightRef.current.has(cacheKey)) return;
+
+    poiImageRepairInFlightRef.current.add(cacheKey);
+    try {
+      const service = await ensurePlacesService();
+      const statusEnum = window.google?.maps?.places?.PlacesServiceStatus;
+      if (!service || !statusEnum) return;
+
+      let photoUrl = "";
+      const poiId = Number(poi?.poi_id);
+
+      if (Number.isInteger(poiId) && poiId > 0) {
+        try {
+          const payload = await getPoiPlaceDetails(poiId);
+          const placeId = String(payload?.google_place?.place_id || "").trim();
+          if (placeId) {
+            const details = await new Promise((resolve, reject) => {
+              service.getDetails(
+                { placeId, fields: ["place_id", "photos"] },
+                (result, status) => {
+                  if (status === statusEnum.OK) {
+                    resolve(result || null);
+                    return;
+                  }
+                  reject(new Error(`Place details failed: ${status}`));
+                }
+              );
+            });
+            photoUrl = getPlacePhotoUrl(details, 1200) || getPlacePhotoUrl(details, 220);
+          }
+        } catch {
+          // fallback to text search
+        }
+      }
+
+      if (!photoUrl) {
+        const baseQuery = `${poi?.name || ""} ${poi?.address || ""}`.trim();
+        if (!baseQuery) return;
+        const queries = [
+          `${baseQuery} Malaysia`,
+          `${poi?.name || ""} Malaysia`.trim(),
+          baseQuery,
+        ];
+
+        for (const query of queries) {
+          const results = await textSearchPlaces(
+            service,
+            {
+              query,
+              location: new window.google.maps.LatLng(DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng),
+              radius: 30000,
+            },
+            statusEnum
+          );
+          photoUrl = getPlacePhotoUrl(results[0], 220);
+          if (photoUrl) break;
+        }
+      }
+
+      if (!photoUrl || (failedUrl && photoUrl === failedUrl)) return;
+
+      const nextCache = {
+        ...(poiImageCache && typeof poiImageCache === "object" ? poiImageCache : {}),
+        [cacheKey]: photoUrl,
+      };
+      writePoiImageCache(nextCache);
+
+      setFavorites((prev) =>
+        prev.map((item) => (Number(item?.poi_id) === poiId ? { ...item, image_url: photoUrl } : item))
+      );
+      setSelectedFavoritePoi((prev) =>
+        Number(prev?.poi?.poi_id) === poiId
+          ? { ...prev, poi: { ...(prev.poi || {}), image_url: photoUrl } }
+          : prev
+      );
+      setFavoritePoiDetails((prev) =>
+        Number(prev?.poi?.poi_id) === poiId
+          ? { ...prev, poi: { ...(prev.poi || {}), image_url: photoUrl } }
+          : prev
+      );
+
+      if (Number.isInteger(poiId) && poiId > 0) {
+        try {
+          await patchPoiImage(poiId, photoUrl);
+        } catch {
+          // ignore transient API errors
+        }
+      }
+    } catch {
+      // keep silent; placeholder/fallback still renders
+    } finally {
+      poiImageRepairInFlightRef.current.delete(cacheKey);
+    }
+  };
+
+  useEffect(() => {
+    if (!favorites.length) return;
+
+    let cancelled = false;
+    const run = async () => {
+      for (const poi of favorites) {
+        if (cancelled) break;
+        const cacheKey = getPoiImageCacheKey(poi);
+        const attemptKey = Number(poi?.poi_id) > 0 ? `poi:${Number(poi?.poi_id)}` : cacheKey;
+        if (attemptKey && !poiAutoHealAttemptedRef.current.has(attemptKey)) {
+          poiAutoHealAttemptedRef.current.add(attemptKey);
+          await healFavoritePoiImage(poi);
+          continue;
+        }
+
+        const currentUrl = String(getFavoritePoiThumbUrl(poi) || "").trim();
+
+        if (!currentUrl || isLikelyExpiringGooglePhotoUrl(currentUrl)) {
+          await healFavoritePoiImage(poi, currentUrl);
+          continue;
+        }
+
+        const validationKey = `${cacheKey}|${currentUrl}`;
+        if (poiThumbValidationCheckedRef.current.has(validationKey)) continue;
+        poiThumbValidationCheckedRef.current.add(validationKey);
+
+        const ok = await canLoadImageUrl(currentUrl, 5000);
+        if (!ok) {
+          await healFavoritePoiImage(poi, currentUrl);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [favorites, poiImageCache]);
+
   const handleLogout = () => {
     const shouldLogout = window.confirm("Are you sure you want to log out?");
     if (!shouldLogout) return;
@@ -91,12 +357,12 @@ export default function ProfilePage() {
 
   const getFavoritePoiThumbUrl = (poi) => {
     const dbUrl = String(poi?.image_url || "").trim();
-    if (dbUrl) return dbUrl;
     if (poi?.poi_id && poiImageCache[`poi:${poi.poi_id}`]) return String(poiImageCache[`poi:${poi.poi_id}`] || "");
     const name = String(poi?.name || "").trim().toLowerCase();
     const address = String(poi?.address || "").trim().toLowerCase();
     const fallbackKey = `poi:${name}|${address}`;
-    return String(poiImageCache[fallbackKey] || "");
+    if (poiImageCache[fallbackKey]) return String(poiImageCache[fallbackKey] || "");
+    return dbUrl;
   };
 
   const openFavoritePoiDetail = async (poi) => {
@@ -247,6 +513,11 @@ export default function ProfilePage() {
                       style={favoriteThumbImgStyle}
                       loading="lazy"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const failedSrc = String(e.currentTarget?.src || "").trim();
+                        e.currentTarget.removeAttribute("src");
+                        void healFavoritePoiImage(poi, failedSrc);
+                      }}
                     />
                   ) : (
                     <div style={favoriteThumbPlaceholderStyle}>

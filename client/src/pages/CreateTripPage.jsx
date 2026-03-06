@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { CalendarIcon, DotIcon, SearchIcon, UserIcon } from "../components/icons";
+import { CalendarIcon, SearchIcon } from "../components/icons";
 import { createTrip, generateAiTripItinerary } from "../services/api";
 import malaysiaLocations from "../data/malaysiaLocations";
 
@@ -38,15 +38,15 @@ function emitSmartPlanProgress(tripId, progress) {
 }
 
 const PREFS = [
-  { key: "classic", label: "Classic Must-Dos" },
-  { key: "food", label: "Food & Drink" },
-  { key: "niche", label: "Niche Exploration" },
-  { key: "photo", label: "Photogenic Shots" },
-  { key: "shop", label: "Shopping" },
-  { key: "walk", label: "City Walk" },
-  { key: "nature", label: "Nature Scenery" },
-  { key: "art", label: "Art & Exhibitions" },
-  { key: "history", label: "Historical Buildings" },
+  { key: "classic", label: "Classic Must-Dos", emoji: "⭐" },
+  { key: "food", label: "Food & Drink", emoji: "🍜" },
+  { key: "niche", label: "Niche Exploration", emoji: "🧭" },
+  { key: "photo", label: "Photogenic Shots", emoji: "📸" },
+  { key: "shop", label: "Shopping", emoji: "🛍️" },
+  { key: "walk", label: "City Walk", emoji: "🚶" },
+  { key: "nature", label: "Nature Scenery", emoji: "🌿" },
+  { key: "art", label: "Art & Exhibitions", emoji: "🎨" },
+  { key: "history", label: "Historical Buildings", emoji: "🏛️" },
 ];
 
 export default function CreateTripPage() {
@@ -180,15 +180,6 @@ export default function CreateTripPage() {
 
   return (
     <div>
-      <div className="row createTopActions" style={{ marginTop: 6 }}>
-        <button className="iconBtn" aria-label="search">
-          <SearchIcon />
-        </button>
-        <button className="iconBtn" aria-label="profile" onClick={() => navigate("/profile")}>
-          <UserIcon />
-        </button>
-      </div>
-
       <div className="h1">Where do you want to go?</div>
 
       <div className="inputWrap" style={{ marginTop: 10 }}>
@@ -294,10 +285,7 @@ export default function CreateTripPage() {
             className={`chip ${selected.has(pref.key) ? "active" : ""}`}
             onClick={() => toggle(pref.key)}
           >
-            <span className="chipIcon">
-              <DotIcon />
-            </span>
-            <span style={{ fontSize: 13 }}>{pref.label}</span>
+            <span style={{ fontSize: 13 }}>{pref.label} {pref.emoji}</span>
           </button>
         ))}
       </div>

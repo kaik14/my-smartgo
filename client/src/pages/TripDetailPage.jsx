@@ -194,6 +194,35 @@ function getPlacePhotoUrl(place, maxWidth = 220) {
   }
 }
 
+function canLoadImageUrl(url, timeoutMs = 7000) {
+  return new Promise((resolve) => {
+    const text = String(url || "").trim();
+    if (!text) {
+      resolve(false);
+      return;
+    }
+
+    const img = new Image();
+    let finished = false;
+    const done = (ok) => {
+      if (finished) return;
+      finished = true;
+      resolve(ok);
+    };
+
+    const timeoutId = setTimeout(() => done(false), timeoutMs);
+    img.onload = () => {
+      clearTimeout(timeoutId);
+      done(true);
+    };
+    img.onerror = () => {
+      clearTimeout(timeoutId);
+      done(false);
+    };
+    img.src = text;
+  });
+}
+
 const DEFAULT_MAP_CENTER = { lat: 3.139, lng: 101.6869 };
 const ROUTE_COLORS = ["#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6"];
 const TRIP_RECOMMEND_RADIUS_METERS = 2500;
@@ -863,6 +892,8 @@ export default function TripDetailPage() {
   const drawerRef = useRef(null);
   const placesServiceRef = useRef(null);
   const poiImageLookupInFlightRef = useRef(new Set());
+  const poiThumbValidationInFlightRef = useRef(new Set());
+  const poiAutoHealAttemptedRef = useRef(new Set());
   const poiImagePersistInFlightRef = useRef(new Set());
   const tripCoverPersistAttemptedRef = useRef(new Set());
   const destinationCoverLookupInFlightRef = useRef(false);
@@ -893,6 +924,8 @@ export default function TripDetailPage() {
     routeRendererRefs.current = [];
     mapRef.current = null;
     poiImageLookupInFlightRef.current = new Set();
+    poiThumbValidationInFlightRef.current = new Set();
+    poiAutoHealAttemptedRef.current = new Set();
     poiImagePersistInFlightRef.current = new Set();
     tripCoverPersistAttemptedRef.current = new Set();
     destinationCoverLookupInFlightRef.current = false;
@@ -1303,6 +1336,157 @@ export default function TripDetailPage() {
     [sortedDays]
   );
 
+  const ensurePlacesServiceForHealing = async () => {
+    if (placesServiceRef.current) return placesServiceRef.current;
+    const apiKey = String(import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "").trim();
+    if (!apiKey) return null;
+    await loadGoogleMapsApi(apiKey);
+    if (!window.google?.maps?.places?.PlacesService) return null;
+    placesServiceRef.current = new window.google.maps.places.PlacesService(document.createElement("div"));
+    return placesServiceRef.current;
+  };
+
+  const healPoiThumbImage = async (poi, failedUrl = "") => {
+    const service = await ensurePlacesServiceForHealing();
+    const statusEnum = window.google?.maps?.places?.PlacesServiceStatus;
+    if (!service || !statusEnum) return;
+
+    const cacheKey = getPoiImageCacheKey(poi);
+    if (!cacheKey || poiImageLookupInFlightRef.current.has(cacheKey)) return;
+
+    poiImageLookupInFlightRef.current.add(cacheKey);
+    try {
+      let photoUrl = "";
+      const failedPoiId = Number(poi?.poi_id);
+
+      if (Number.isInteger(failedPoiId) && failedPoiId > 0) {
+        try {
+          const payload = await getPoiPlaceDetails(failedPoiId);
+          const placeId = String(payload?.google_place?.place_id || "").trim();
+          if (placeId) {
+            const details = await getPlaceDetailsById(
+              service,
+              { placeId, fields: ["place_id", "photos"] },
+              statusEnum
+            );
+            photoUrl = getPlacePhotoUrl(details, 1200) || getPlacePhotoUrl(details, 220);
+          }
+        } catch {
+          // fallback to text search
+        }
+      }
+
+      if (!photoUrl) {
+        const query = `${poi?.name || ""} ${poi?.address || ""} ${trip?.destination || ""}`.trim();
+        if (!query) return;
+
+        const results = await textSearchPlaces(
+          service,
+          {
+            query,
+            location:
+              mapRef.current?.getCenter?.() ||
+              new window.google.maps.LatLng(DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng),
+            radius: 30000,
+          },
+          statusEnum
+        );
+        photoUrl = getPlacePhotoUrl(results[0], 220);
+      }
+
+      if (!photoUrl || (failedUrl && photoUrl === failedUrl)) return;
+
+      const nextCache = {
+        ...readPoiImageCache(),
+        [cacheKey]: photoUrl,
+      };
+      writePoiImageCache(nextCache);
+      setPoiImageUrls((prev) => ({ ...prev, [cacheKey]: photoUrl }));
+
+      setDetail((prev) => {
+        if (!prev?.days?.length) return prev;
+        return {
+          ...prev,
+          days: prev.days.map((day) => ({
+            ...day,
+            pois: (day.pois || []).map((item) => {
+              const samePoiId = Number.isInteger(failedPoiId) && failedPoiId > 0
+                ? Number(item?.poi_id) === failedPoiId
+                : getPoiImageCacheKey(item) === cacheKey;
+              return samePoiId ? { ...item, image_url: photoUrl } : item;
+            }),
+          })),
+        };
+      });
+
+      const selectedPoiId = Number(selectedPoiDetailTarget?.poi?.poi_id ?? poiDetailData?.poi?.poi_id);
+      if (Number.isInteger(failedPoiId) && failedPoiId > 0 && selectedPoiId === failedPoiId) {
+        setSelectedPoiDetailTarget((prev) =>
+          prev ? { ...prev, poi: { ...(prev.poi || {}), image_url: photoUrl } } : prev
+        );
+        setPoiDetailData((prev) =>
+          prev ? { ...prev, poi: { ...(prev.poi || {}), image_url: photoUrl } } : prev
+        );
+      }
+
+      if (Number.isInteger(failedPoiId) && failedPoiId > 0 && !poiImagePersistInFlightRef.current.has(String(failedPoiId))) {
+        poiImagePersistInFlightRef.current.add(String(failedPoiId));
+        void patchPoiImage(failedPoiId, photoUrl)
+          .catch(() => {})
+          .finally(() => {
+            poiImagePersistInFlightRef.current.delete(String(failedPoiId));
+          });
+      }
+    } catch {
+      // keep silent; placeholder/fallback will still render
+    } finally {
+      poiImageLookupInFlightRef.current.delete(cacheKey);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "overview") return;
+    if (!visibleDays.length) return;
+
+    let cancelled = false;
+    const pois = visibleDays.flatMap((day) => day?.pois || []).filter((poi) => poi?.name);
+    if (!pois.length) return;
+
+    const run = async () => {
+      for (const poi of pois) {
+        if (cancelled) break;
+
+        const cacheKey = getPoiImageCacheKey(poi);
+        const attemptKey = Number(poi?.poi_id) > 0 ? `poi:${Number(poi?.poi_id)}` : cacheKey;
+        if (attemptKey && !poiAutoHealAttemptedRef.current.has(attemptKey)) {
+          poiAutoHealAttemptedRef.current.add(attemptKey);
+          await healPoiThumbImage(poi);
+          continue;
+        }
+
+        const currentUrl = String(poiImageUrls[cacheKey] || poi?.image_url || "").trim();
+        if (!currentUrl || isLegacyGooglePlacesPhotoUrl(currentUrl)) {
+          await healPoiThumbImage(poi, currentUrl);
+          continue;
+        }
+
+        const validationKey = `${cacheKey}|${currentUrl}`;
+        if (poiThumbValidationInFlightRef.current.has(validationKey)) continue;
+        poiThumbValidationInFlightRef.current.add(validationKey);
+
+        const ok = await canLoadImageUrl(currentUrl, 5000);
+        if (!ok) {
+          await healPoiThumbImage(poi, currentUrl);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, visibleDays, poiImageUrls, mapReadyVersion, trip?.destination]);
+
   useEffect(() => {
     const serverCover = String(trip?.cover_image_url || "").trim();
     if (!serverCover) return;
@@ -1540,6 +1724,16 @@ export default function TripDetailPage() {
         const hiResUrl = getPlacePhotoUrl(details, 1200);
         if (!hiResUrl || hiResUrl === existingImage) return;
 
+        const hiResCacheKey = getPoiImageCacheKey({ poi_id: poiId });
+        if (hiResCacheKey) {
+          const nextCache = {
+            ...readPoiImageCache(),
+            [hiResCacheKey]: hiResUrl,
+          };
+          writePoiImageCache(nextCache);
+          setPoiImageUrls((prev) => ({ ...prev, [hiResCacheKey]: hiResUrl }));
+        }
+
         setPoiDetailData((prev) => {
           const prevPoiId = Number(prev?.poi?.poi_id);
           if (prevPoiId !== poiId) return prev;
@@ -1551,6 +1745,34 @@ export default function TripDetailPage() {
             },
           };
         });
+
+        setDetail((prev) => {
+          if (!prev?.days?.length) return prev;
+          return {
+            ...prev,
+            days: prev.days.map((day) => ({
+              ...day,
+              pois: (day.pois || []).map((item) =>
+                Number(item?.poi_id) === poiId ? { ...item, image_url: hiResUrl } : item
+              ),
+            })),
+          };
+        });
+
+        setSelectedPoiDetailTarget((prev) =>
+          Number(prev?.poi?.poi_id) === poiId
+            ? { ...prev, poi: { ...(prev.poi || {}), image_url: hiResUrl } }
+            : prev
+        );
+
+        if (!poiImagePersistInFlightRef.current.has(String(poiId))) {
+          poiImagePersistInFlightRef.current.add(String(poiId));
+          void patchPoiImage(poiId, hiResUrl)
+            .catch(() => {})
+            .finally(() => {
+              poiImagePersistInFlightRef.current.delete(String(poiId));
+            });
+        }
 
         setPoiPlaceDetailsCacheByPoiId((prev) => {
           const cached = prev?.[poiId];
@@ -2881,7 +3103,8 @@ export default function TripDetailPage() {
                         const incomingRouteSegment = getPoiIncomingRouteSegment(dayRoute, poi);
                         const incomingSegmentKey = poi.day_poi_id != null ? `dp:${poi.day_poi_id}` : `vo:${poi.visit_order}`;
                         const incomingOverrideKey = `${String(day.day_id)}|${incomingSegmentKey}`;
-                        const poiThumbUrl = poi.image_url || poiImageUrls[getPoiImageCacheKey(poi)] || "";
+                        const poiThumbCacheUrl = poiImageUrls[getPoiImageCacheKey(poi)] || "";
+                        const poiThumbUrl = poiThumbCacheUrl || poi.image_url || "";
                         const isSelectedPoi =
                           poiDetailPanelOpen &&
                           (selectedPoiDetailTarget?.dayPoiId != null
@@ -2953,6 +3176,11 @@ export default function TripDetailPage() {
                                   style={poiThumbImgStyle}
                                   loading="lazy"
                                   referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    const failedSrc = String(e.currentTarget?.src || "").trim();
+                                    e.currentTarget.removeAttribute("src");
+                                    void healPoiThumbImage(poi, failedSrc);
+                                  }}
                                 />
                               ) : (
                                 <div style={poiThumbPlaceholderStyle}>
