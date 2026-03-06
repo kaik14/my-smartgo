@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+
 const errorTextStyle = {
   color: "#dc2626",
   fontSize: 13,
@@ -18,6 +20,35 @@ export default function PoiDetailPanel({
   favoriteBusy,
   onToggleFavorite,
 }) {
+  const [viewportHeight, setViewportHeight] = useState(() =>
+    typeof window !== "undefined" ? window.innerHeight : 800
+  );
+  const [mobilePanelOffsetY, setMobilePanelOffsetY] = useState(0);
+  const [mobileDragging, setMobileDragging] = useState(false);
+  const dragStateRef = useRef({ startY: 0, startOffsetY: 0, active: false });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleResize = () => setViewportHeight(window.innerHeight);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (isDesktop) return;
+    if (!open) {
+      setMobileDragging(false);
+      setMobilePanelOffsetY(0);
+      dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
+      return;
+    }
+    setMobilePanelOffsetY(0);
+  }, [open, isDesktop, target?.dayPoiId, target?.poi?.poi_id]);
+
+  const mobileMaxOffsetY = useMemo(() => Math.max(220, Math.round(viewportHeight * 0.72)), [viewportHeight]);
+  const mobileCloseThresholdY = useMemo(() => Math.max(170, Math.round(viewportHeight * 0.46)), [viewportHeight]);
+
   if (!open || !target) return null;
 
   const poi = target.poi || {};
@@ -49,14 +80,84 @@ export default function PoiDetailPanel({
     .replace(/\b\w/g, (char) => char.toUpperCase());
   const shouldClampIntro = introText.length > 220 && !introExpanded;
 
+  const startDragAt = (clientY) => {
+    if (isDesktop) return;
+    dragStateRef.current = {
+      startY: clientY,
+      startOffsetY: mobilePanelOffsetY,
+      active: true,
+    };
+    setMobileDragging(true);
+  };
+
+  const moveDragAt = (clientY) => {
+    if (isDesktop) return;
+    if (!dragStateRef.current.active) return;
+    const deltaY = clientY - dragStateRef.current.startY;
+    const nextOffset = Math.min(mobileMaxOffsetY, Math.max(0, dragStateRef.current.startOffsetY + deltaY));
+    setMobilePanelOffsetY(nextOffset);
+  };
+
+  const endDrag = () => {
+    if (isDesktop) return;
+    if (!dragStateRef.current.active) return;
+    if (mobilePanelOffsetY >= mobileCloseThresholdY) {
+      setMobileDragging(false);
+      dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
+      onClose();
+      return;
+    }
+    setMobilePanelOffsetY(0);
+    setMobileDragging(false);
+    dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
+  };
+
   return (
     <div
-      style={isDesktop ? poiDetailDesktopWrapStyle : poiDetailMobileWrapStyle}
+      style={
+        isDesktop
+          ? poiDetailDesktopWrapStyle
+          : {
+              ...poiDetailMobileWrapStyle,
+              transform: `translateY(${Math.round(mobilePanelOffsetY)}px)`,
+              transition: mobileDragging ? "none" : "transform 0.2s ease",
+            }
+      }
       role="dialog"
       aria-modal="false"
       aria-label="POI details"
     >
-      <div style={poiDetailHandleStyle} aria-hidden="true" />
+      <div
+        style={{
+          ...poiDetailHandleStyle,
+          ...(isDesktop ? null : { cursor: mobileDragging ? "grabbing" : "grab", touchAction: "none" }),
+        }}
+        aria-hidden="true"
+        onMouseDown={isDesktop ? undefined : (event) => startDragAt(event.clientY)}
+        onMouseMove={isDesktop ? undefined : (event) => moveDragAt(event.clientY)}
+        onMouseUp={isDesktop ? undefined : endDrag}
+        onMouseLeave={isDesktop ? undefined : endDrag}
+        onTouchStart={
+          isDesktop
+            ? undefined
+            : (event) => {
+                const touch = event.touches?.[0];
+                if (!touch) return;
+                startDragAt(touch.clientY);
+              }
+        }
+        onTouchMove={
+          isDesktop
+            ? undefined
+            : (event) => {
+                const touch = event.touches?.[0];
+                if (!touch) return;
+                moveDragAt(touch.clientY);
+              }
+        }
+        onTouchEnd={isDesktop ? undefined : endDrag}
+        onTouchCancel={isDesktop ? undefined : endDrag}
+      />
       <div className="row" style={{ alignItems: "flex-start", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={poiDetailTitleStyle}>{poi.name || "Unnamed POI"}</div>
@@ -91,7 +192,18 @@ export default function PoiDetailPanel({
             ) : null}
           </div>
         </div>
-        <button type="button" className="secondaryBtn" onClick={onClose} style={poiDetailCloseBtnStyle}>
+        <button
+          type="button"
+          className="secondaryBtn"
+          onClick={(event) => {
+            event.stopPropagation();
+            setMobileDragging(false);
+            setMobilePanelOffsetY(0);
+            dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
+            onClose();
+          }}
+          style={poiDetailCloseBtnStyle}
+        >
           x
         </button>
       </div>
@@ -236,7 +348,8 @@ const poiDetailMobileWrapStyle = {
   left: 10,
   right: 10,
   bottom: 10,
-  maxHeight: "72vh",
+  height: "86vh",
+  maxHeight: "86vh",
   overflowY: "auto",
   background: "rgba(255,255,255,0.99)",
   border: "1px solid rgba(148,163,184,0.18)",

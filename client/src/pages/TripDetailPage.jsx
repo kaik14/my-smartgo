@@ -736,6 +736,29 @@ function RouteModeLineIcon({ modeKey, size = 14, color = "currentColor" }) {
   );
 }
 
+function TrashLineIcon({ size = 14, color = "currentColor" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      style={{ display: "block" }}
+    >
+      <path d="M4 7h16" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      <rect x="6" y="7" width="12" height="13" rx="2" />
+      <path d="M10 11v5M14 11v5" />
+    </svg>
+  );
+}
+
 function getPoiIncomingRouteSegment(dayRouteInfo, poi) {
   if (!dayRouteInfo || !poi) return null;
 
@@ -849,6 +872,9 @@ export default function TripDetailPage() {
   const [tripDateDraft, setTripDateDraft] = useState({ start_date: "", end_date: "" });
   const [savingTripDates, setSavingTripDates] = useState(false);
   const [tripDatesError, setTripDatesError] = useState("");
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1024
+  );
   const [floatingRouteCtaRight, setFloatingRouteCtaRight] = useState(16);
   const [routeEditMode, setRouteEditMode] = useState(false);
   const [routeEditBusy, setRouteEditBusy] = useState(false);
@@ -1084,6 +1110,14 @@ export default function TripDetailPage() {
   }, [tripId]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
     const updateFloatingCtaPosition = () => {
       const drawerEl = drawerRef.current;
       if (!drawerEl) {
@@ -1143,7 +1177,9 @@ export default function TripDetailPage() {
   const isSmartPlanGenerating = smartPlanProgress?.status === "generating";
   const smartPlanErrorMessage = smartPlanProgress?.status === "error" ? String(smartPlanProgress.message || "") : "";
   const smartPlanStatusMessage = String(smartPlanProgress?.message || "").trim();
-  const isDesktopPoiDetailLayout = typeof window !== "undefined" && window.innerWidth >= 960;
+  const isDesktopPoiDetailLayout = viewportWidth >= 960;
+  const isMobileLayout = viewportWidth <= 640;
+  const isVeryNarrowMobile = viewportWidth <= 420;
 
   const sortedDays = useMemo(() => {
     const rawDays = Array.isArray(detail?.days) ? [...detail.days] : [];
@@ -2941,8 +2977,13 @@ export default function TripDetailPage() {
 
         </section>
 
-        <section ref={drawerRef} style={drawerStyle}>
-          <div style={drawerHandleStyle} />
+        <section
+          ref={drawerRef}
+          style={{
+            ...drawerStyle,
+            ...(isMobileLayout ? { paddingBottom: routeEditMode ? 110 : 88 } : null),
+          }}
+        >
           {deleteError ? <div style={{ ...errorTextStyle, marginBottom: 8 }}>{deleteError}</div> : null}
           {routeEditError ? <div style={{ ...errorTextStyle, marginBottom: 8 }}>{routeEditError}</div> : null}
 
@@ -3050,9 +3091,25 @@ export default function TripDetailPage() {
             {visibleDays.length ? (
               visibleDays.map((day) => (
                 <section key={day.day_id} style={sectionCardStyle}>
-                  <div className="row" style={{ marginBottom: 10, alignItems: "center" }}>
+                  <div
+                    className="row"
+                    style={{
+                      marginBottom: 10,
+                      alignItems: isMobileLayout ? "flex-start" : "center",
+                      flexWrap: isMobileLayout ? "wrap" : "nowrap",
+                      rowGap: isMobileLayout ? 8 : 0,
+                    }}
+                  >
                     <div style={{ fontWeight: 700 }}>Day {day.day_number}</div>
-                    <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                    <div
+                      className="row"
+                      style={{
+                        gap: 8,
+                        alignItems: "center",
+                        justifyContent: "flex-start",
+                        flexWrap: isMobileLayout ? "wrap" : "nowrap",
+                      }}
+                    >
                       <div className="muted">{formatDayFromTripStart(trip.start_date, day.day_number) || "-"}</div>
                       {!isOverviewTab && routeEditMode ? (
                         <>
@@ -3167,8 +3224,29 @@ export default function TripDetailPage() {
                           }}
                           onDragEnd={() => setDraggingDayPoi(null)}
                         >
-                          <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
-                            <div style={poiThumbWrapStyle} aria-hidden="true">
+                          <div
+                            className="row"
+                            style={{
+                              alignItems: "flex-start",
+                              justifyContent: "flex-start",
+                              gap: isMobileLayout ? 8 : 12,
+                              flexWrap: isVeryNarrowMobile ? "wrap" : "nowrap",
+                            }}
+                          >
+                            <div
+                              style={{
+                                ...poiThumbWrapStyle,
+                                ...(isMobileLayout
+                                  ? {
+                                      width: 56,
+                                      minWidth: 56,
+                                      height: 56,
+                                      borderRadius: 10,
+                                    }
+                                  : null),
+                              }}
+                              aria-hidden="true"
+                            >
                               {poiThumbUrl ? (
                                 <img
                                   src={poiThumbUrl}
@@ -3197,11 +3275,18 @@ export default function TripDetailPage() {
                                 {"\u22EE\u22EE"}
                               </div>
                             ) : null}
-                            <div style={{ minWidth: 28, fontWeight: 700, color: "#0f172a" }}>
+                            <div style={{ minWidth: isMobileLayout ? 20 : 28, fontWeight: 700, color: "#0f172a" }}>
                               #{poi.visit_order ?? "-"}
                             </div>
 
-                            <div style={{ flex: 1, position: "relative", paddingRight: routeEditMode ? 92 : 0 }}>
+                            <div
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                position: "relative",
+                                paddingRight: routeEditMode ? (isMobileLayout ? 44 : 92) : 0,
+                              }}
+                            >
                               {routeEditMode && poi.day_poi_id ? (
                                 <button
                                   type="button"
@@ -3211,15 +3296,16 @@ export default function TripDetailPage() {
                                     void handleDeletePoiFromDay(poi);
                                   }}
                                   disabled={routeEditBusy}
-                                  style={deletePoiBtnStyle}
+                                  style={isMobileLayout ? deletePoiBtnMobileTopRightStyle : deletePoiBtnStyle}
+                                  aria-label="Delete POI"
+                                  title="Delete POI"
                                 >
-                                  Delete
+                                  <TrashLineIcon size={14} />
                                 </button>
                               ) : null}
                               <div style={{ fontWeight: 700 }}>{poi.name || "Unnamed POI"}</div>
                               <div className="muted" style={{ marginTop: 2, fontSize: 13 }}>
                                 {poi.type || "other"}
-                                {poi.address ? ` | ${poi.address}` : ""}
                               </div>
 
                               {(poi.start_time || poi.duration_min) ? (
@@ -3230,7 +3316,7 @@ export default function TripDetailPage() {
                                 </div>
                               ) : null}
 
-                              {poi.day_poi_id ? (
+                              {!routeEditMode && poi.day_poi_id ? (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -3244,20 +3330,22 @@ export default function TripDetailPage() {
                                 </button>
                               ) : null}
 
-                              <PoiRouteSegmentMeta
-                                segment={incomingRouteSegment}
-                                overrideMode={segmentModeOverrides[incomingOverrideKey] || "AUTO"}
-                                onChangeMode={
-                                  incomingRouteSegment
-                                    ? (modeKey) =>
-                                        void handleSegmentModeOverrideChange({
-                                          dayId: day.day_id,
-                                          poi,
-                                          modeKey,
-                                        })
-                                    : undefined
-                                }
-                              />
+                              {!routeEditMode ? (
+                                <PoiRouteSegmentMeta
+                                  segment={incomingRouteSegment}
+                                  overrideMode={segmentModeOverrides[incomingOverrideKey] || "AUTO"}
+                                  onChangeMode={
+                                    incomingRouteSegment
+                                      ? (modeKey) =>
+                                          void handleSegmentModeOverrideChange({
+                                            dayId: day.day_id,
+                                            poi,
+                                            modeKey,
+                                          })
+                                      : undefined
+                                  }
+                                />
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -3411,11 +3499,28 @@ export default function TripDetailPage() {
         </section>
       </div>
 
-      <div style={{ ...floatingRouteCtaWrapStyle, right: floatingRouteCtaRight }}>
+      <div
+        style={{
+          ...floatingRouteCtaWrapStyle,
+          right: isMobileLayout ? 12 : floatingRouteCtaRight,
+          bottom: isMobileLayout ? 12 : floatingRouteCtaWrapStyle.bottom,
+          gap: isMobileLayout ? 8 : floatingRouteCtaWrapStyle.gap,
+        }}
+      >
         <button
           type="button"
           className="secondaryBtn"
-          style={floatingAiCtaStyle}
+          style={{
+            ...floatingAiCtaStyle,
+            ...(isMobileLayout
+              ? {
+                  width: 46,
+                  minWidth: 46,
+                  height: 46,
+                  minHeight: 46,
+                }
+              : null),
+          }}
           onClick={() => navigate(`/trips/${tripId}/ai-chat`)}
           aria-label="Open AI trip chat"
         >
@@ -3424,7 +3529,17 @@ export default function TripDetailPage() {
         <button
           type="button"
           className="primaryBtn"
-          style={floatingRouteCtaStyle}
+          style={{
+            ...floatingRouteCtaStyle,
+            ...(isMobileLayout
+              ? {
+                  height: 46,
+                  minHeight: 46,
+                  padding: "0 18px",
+                  fontSize: 15,
+                }
+              : null),
+          }}
           onClick={() => {
             setRouteEditError("");
             setDraggingDayPoi(null);
@@ -3868,17 +3983,28 @@ const poiSearchAddBtnStyle = {
 
 const deletePoiBtnStyle = {
   position: "absolute",
-  top: 0,
-  right: 0,
-  minHeight: 30,
-  padding: "0 10px",
+  top: -2,
+  right: -2,
+  width: 34,
+  minWidth: 34,
+  height: 34,
+  minHeight: 34,
+  padding: 0,
   borderRadius: 999,
-  fontSize: 12,
-  fontWeight: 700,
-  fontFamily: "inherit",
   color: "#b91c1c",
   borderColor: "rgba(220,38,38,0.22)",
   background: "rgba(254,242,242,0.72)",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const deletePoiBtnMobileTopRightStyle = {
+  ...deletePoiBtnStyle,
+  width: 32,
+  minWidth: 32,
+  height: 32,
+  minHeight: 32,
 };
 
 const noteButtonStyle = (hasNote) => ({
@@ -4128,14 +4254,6 @@ const drawerStyle = {
   border: "1px solid rgba(148,163,184,0.16)",
   boxShadow: "0 20px 40px rgba(15,23,42,0.08)",
   padding: "10px 12px 16px",
-};
-
-const drawerHandleStyle = {
-  width: 52,
-  height: 5,
-  borderRadius: 999,
-  background: "rgba(148,163,184,0.45)",
-  margin: "0 auto 6px",
 };
 
 const mapShellStyle = {
