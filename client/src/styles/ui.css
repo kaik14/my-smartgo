@@ -345,6 +345,10 @@ a {
   justify-self: stretch;
 }
 
+body.nearby-poi-detail-open .bottomNav {
+  display: none;
+}
+
 .tripGrid {
   display: grid;
   grid-template-columns: 1fr;

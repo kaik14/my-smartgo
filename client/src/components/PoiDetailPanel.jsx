@@ -127,85 +127,88 @@ export default function PoiDetailPanel({
       aria-modal="false"
       aria-label="POI details"
     >
-      <div
-        style={{
-          ...poiDetailHandleStyle,
-          ...(isDesktop ? null : { cursor: mobileDragging ? "grabbing" : "grab", touchAction: "none" }),
-        }}
-        aria-hidden="true"
-        onMouseDown={isDesktop ? undefined : (event) => startDragAt(event.clientY)}
-        onMouseMove={isDesktop ? undefined : (event) => moveDragAt(event.clientY)}
-        onMouseUp={isDesktop ? undefined : endDrag}
-        onMouseLeave={isDesktop ? undefined : endDrag}
-        onTouchStart={
-          isDesktop
-            ? undefined
-            : (event) => {
-                const touch = event.touches?.[0];
-                if (!touch) return;
-                startDragAt(touch.clientY);
-              }
-        }
-        onTouchMove={
-          isDesktop
-            ? undefined
-            : (event) => {
-                const touch = event.touches?.[0];
-                if (!touch) return;
-                moveDragAt(touch.clientY);
-              }
-        }
-        onTouchEnd={isDesktop ? undefined : endDrag}
-        onTouchCancel={isDesktop ? undefined : endDrag}
-      />
-      <div className="row" style={{ alignItems: "flex-start", gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={poiDetailTitleStyle}>{poi.name || "Unnamed POI"}</div>
-          <div
-            className="row"
-            style={{ gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-start" }}
-          >
-            {googlePlace?.rating ? (
-              <span style={poiDetailRatingChipStyle}>
-                <span aria-hidden="true" style={poiDetailEmojiStarStyle}>{"\u2B50"}</span>
-                <span style={{ fontWeight: 600, letterSpacing: "-0.01em", color: "#9a3412" }}>
-                  {Number(googlePlace.rating).toFixed(1)}
-                </span>
-              </span>
-            ) : null}
-            <span style={poiDetailTypeChipStyle}>{typeLabel || "Other"}</span>
-            {canFavorite ? (
-              <button
-                type="button"
-                className="secondaryBtn"
-                style={{
-                  ...poiDetailFavoriteChipStyle,
-                  ...(isFavorite ? poiDetailFavoriteChipActiveStyle : null),
-                }}
-                onClick={onToggleFavorite}
-                disabled={favoriteBusy}
-                title={isFavorite ? "Remove from favorites" : "Add to favorites"}
-              >
-                <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1 }}>{"\u2605"}</span>
-                <span>{favoriteBusy ? "..." : isFavorite ? "Saved" : "Favorite"}</span>
-              </button>
-            ) : null}
-          </div>
-        </div>
-        <button
-          type="button"
-          className="secondaryBtn"
-          onClick={(event) => {
-            event.stopPropagation();
-            setMobileDragging(false);
-            setMobilePanelOffsetY(0);
-            dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
-            onClose();
+      <div style={poiDetailStickyHeaderStyle}>
+        <div
+          style={{
+            ...poiDetailHandleStyle,
+            ...(isDesktop ? null : { cursor: mobileDragging ? "grabbing" : "grab", touchAction: "none" }),
           }}
-          style={poiDetailCloseBtnStyle}
-        >
-          x
-        </button>
+          aria-hidden="true"
+          onMouseDown={isDesktop ? undefined : (event) => startDragAt(event.clientY)}
+          onMouseMove={isDesktop ? undefined : (event) => moveDragAt(event.clientY)}
+          onMouseUp={isDesktop ? undefined : endDrag}
+          onMouseLeave={isDesktop ? undefined : endDrag}
+          onTouchStart={
+            isDesktop
+              ? undefined
+              : (event) => {
+                  const touch = event.touches?.[0];
+                  if (!touch) return;
+                  startDragAt(touch.clientY);
+                }
+          }
+          onTouchMove={
+            isDesktop
+              ? undefined
+              : (event) => {
+                  const touch = event.touches?.[0];
+                  if (!touch) return;
+                  moveDragAt(touch.clientY);
+                }
+          }
+          onTouchEnd={isDesktop ? undefined : endDrag}
+          onTouchCancel={isDesktop ? undefined : endDrag}
+        />
+        <div className="row" style={{ alignItems: "flex-start", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={poiDetailTitleStyle}>{poi.name || "Unnamed POI"}</div>
+          </div>
+          <button
+            type="button"
+            className="secondaryBtn"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMobileDragging(false);
+              setMobilePanelOffsetY(0);
+              dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
+              onClose();
+            }}
+            style={poiDetailCloseBtnStyle}
+          >
+            x
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="row"
+        style={{ gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-start" }}
+      >
+        {googlePlace?.rating ? (
+          <span style={poiDetailRatingChipStyle}>
+            <span aria-hidden="true" style={poiDetailEmojiStarStyle}>{"\u2B50"}</span>
+            <span style={{ fontWeight: 600, letterSpacing: "-0.01em", color: "#9a3412" }}>
+              {Number(googlePlace.rating).toFixed(1)}
+            </span>
+          </span>
+        ) : null}
+        <span style={poiDetailTypeChipStyle}>{typeLabel || "Other"}</span>
+        {canFavorite ? (
+          <button
+            type="button"
+            className="secondaryBtn"
+            style={{
+              ...poiDetailFavoriteChipStyle,
+              ...(isFavorite ? poiDetailFavoriteChipActiveStyle : null),
+            }}
+            onClick={onToggleFavorite}
+            disabled={favoriteBusy}
+            title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          >
+            <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1 }}>{"\u2605"}</span>
+            <span>{favoriteBusy ? "..." : isFavorite ? "Saved" : "Favorite"}</span>
+          </button>
+        ) : null}
       </div>
 
       {imageUrl ? (
@@ -339,7 +342,7 @@ const poiDetailDesktopWrapStyle = {
   border: "1px solid rgba(148,163,184,0.18)",
   borderRadius: 22,
   boxShadow: "0 24px 50px rgba(15,23,42,0.18)",
-  padding: "10px 12px 16px",
+  padding: "0 12px 16px",
   zIndex: 60,
 };
 
@@ -355,7 +358,7 @@ const poiDetailMobileWrapStyle = {
   border: "1px solid rgba(148,163,184,0.18)",
   borderRadius: 22,
   boxShadow: "0 24px 50px rgba(15,23,42,0.22)",
-  padding: "10px 12px 16px",
+  padding: "0 12px 16px",
   zIndex: 80,
 };
 
@@ -365,6 +368,18 @@ const poiDetailHandleStyle = {
   borderRadius: 999,
   background: "rgba(148,163,184,0.4)",
   margin: "2px auto 10px",
+};
+
+const poiDetailStickyHeaderStyle = {
+  position: "sticky",
+  top: 0,
+  zIndex: 6,
+  background: "#fff",
+  margin: "0 -12px 4px",
+  padding: "10px 12px 8px",
+  borderBottom: "1px solid rgba(148,163,184,0.12)",
+  borderTopLeftRadius: 22,
+  borderTopRightRadius: 22,
 };
 
 const poiDetailTitleStyle = {

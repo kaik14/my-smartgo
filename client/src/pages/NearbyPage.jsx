@@ -438,6 +438,14 @@ export default function NearbyPage() {
   const favoritePoiIdByPlaceIdRef = useRef(new Map());
   const locationPickerRef = useRef(null);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const cls = "nearby-poi-detail-open";
+    if (poiDetailPanelOpen) document.body.classList.add(cls);
+    else document.body.classList.remove(cls);
+    return () => document.body.classList.remove(cls);
+  }, [poiDetailPanelOpen]);
+
   const centerForSearch = mapSearchCenter ?? userLocation ?? DEFAULT_CENTER;
   const filteredMalaysiaCities = useMemo(() => {
     const q = String(locationPickerQuery || "").trim().toLowerCase();
