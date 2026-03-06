@@ -39,10 +39,15 @@ export default function TripCard({ trip, variant = "mint", onClick, onCoverError
         <img
           alt="trip"
           src={coverImageUrl}
+          style={{ opacity: 0, transition: "opacity 0.2s ease" }}
+          onLoad={(e) => {
+            e.currentTarget.style.opacity = "1";
+          }}
           onError={(e) => {
             const failedSrc = String(e.currentTarget?.src || "").trim();
             if (!failedSrc || failedSrc === fallbackCover) return;
             onCoverError?.(trip, failedSrc);
+            e.currentTarget.style.opacity = "0";
             e.currentTarget.src = fallbackCover;
           }}
         />

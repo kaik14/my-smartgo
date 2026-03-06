@@ -3176,8 +3176,12 @@ export default function TripDetailPage() {
                                   style={poiThumbImgStyle}
                                   loading="lazy"
                                   referrerPolicy="no-referrer"
+                                  onLoad={(e) => {
+                                    e.currentTarget.style.opacity = "1";
+                                  }}
                                   onError={(e) => {
                                     const failedSrc = String(e.currentTarget?.src || "").trim();
+                                    e.currentTarget.style.opacity = "0";
                                     e.currentTarget.removeAttribute("src");
                                     void healPoiThumbImage(poi, failedSrc);
                                   }}
@@ -3663,6 +3667,8 @@ const poiThumbImgStyle = {
   height: "100%",
   objectFit: "cover",
   display: "block",
+  opacity: 0,
+  transition: "opacity 0.2s ease",
 };
 
 const poiThumbPlaceholderStyle = {
