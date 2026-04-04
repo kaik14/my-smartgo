@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { EyeIcon, EyeOffIcon } from "../components/icons";
 import { login } from "../services/api";
@@ -13,6 +13,12 @@ export default function LoginPage() {
   const [error, setError] = useState("");
 
   const successHint = location.state?.message || "";
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "SmartGo | Login";
+    }
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();

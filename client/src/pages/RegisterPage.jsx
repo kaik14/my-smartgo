@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { EyeIcon, EyeOffIcon } from "../components/icons";
 import { register } from "../services/api";
@@ -16,6 +16,12 @@ export default function RegisterPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "SmartGo | Register";
+    }
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();

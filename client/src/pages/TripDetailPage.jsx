@@ -441,6 +441,12 @@ export default function TripDetailPage() {
   const isMobileLayout = viewportWidth <= 640;
   const isVeryNarrowMobile = viewportWidth <= 420;
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const titleText = String(trip?.title || trip?.destination || "").trim();
+    document.title = titleText ? `SmartGo | ${titleText}` : "SmartGo | Trip Detail";
+  }, [trip?.title, trip?.destination]);
+
   const sortedDays = useMemo(() => {
     const rawDays = Array.isArray(detail?.days) ? [...detail.days] : [];
     rawDays.sort((a, b) => (a.day_number ?? 0) - (b.day_number ?? 0));

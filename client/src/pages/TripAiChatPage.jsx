@@ -412,6 +412,12 @@ export default function TripAiChatPage() {
     [trip, messages, applying, busySending, pendingDateChange.warning]
   );
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const titleText = String(trip?.title || trip?.destination || "").trim();
+    document.title = titleText ? `SmartGo | ${titleText} Chat` : "SmartGo | Trip Chat";
+  }, [trip?.title, trip?.destination]);
+
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || busySending) return;

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getTripWeatherSummary, getWeatherLineForDate } from "./openMeteoWeatherService.js";
 
 // 推荐的 2026 年最新稳定标识符
 const FALLBACK_GEMINI_MODELS = [
@@ -8,7 +9,7 @@ const FALLBACK_GEMINI_MODELS = [
 ];
 const GEMINI_RETRY_DELAYS_MS = [1000, 2500, 5000];
 
-function buildPrompt({ destination, startDate, endDate, preferences, description, note }) {
+function buildPrompt({ destination, startDate, endDate, preferences, description, note, weatherSummary }) {
   return `
 You are a travel itinerary planner.
 Generate a Malaysia-focused trip itinerary and return ONLY valid JSON.
@@ -19,6 +20,8 @@ Requirements:
 - Preferences: ${preferences || "not specified"}
 - Trip description: ${description || "not specified"}
 - Trip note: ${note || "not specified"}
+- Trip weather:
+${weatherSummary || "Weather unavailable"}
 - The number of days MUST equal the inclusive date range from start to end.
 - Each day must contain 3 to 6 POIs.
 - Prefer places in Malaysia.
@@ -153,6 +156,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function addDaysToYmd(ymd, daysToAdd) {
+  const base = new Date(`${String(ymd || "")}T00:00:00`);
+  if (Number.isNaN(base.getTime()) || !Number.isFinite(daysToAdd)) return ymd;
+  base.setDate(base.getDate() + daysToAdd);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+}
+
 async function generateContentWithRetry(model, prompt, modelName) {
   let lastError = null;
 
@@ -198,6 +208,14 @@ export async function generateItinerary({
   }
 
   const client = new GoogleGenerativeAI(apiKey);
+  let weatherSummary = "Weather unavailable";
+  try {
+    const weather = await getTripWeatherSummary({ destination, startDate, endDate });
+    if (weather?.summaryText) weatherSummary = weather.summaryText;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "Unknown weather error");
+    console.warn(`[Trip weather] destination="${destination}" error=${message}`);
+  }
   const prompt = buildPrompt({
     destination,
     startDate,
@@ -205,6 +223,7 @@ export async function generateItinerary({
     preferences,
     description,
     note,
+    weatherSummary,
   });
 
   const candidates = getModelCandidates();
@@ -257,6 +276,7 @@ function buildSingleDayPrompt({
   preferences,
   description,
   note,
+  weatherLine,
   dayNumber,
   itinerarySummary,
   userRequest,
@@ -271,6 +291,7 @@ Trip context:
 - Preferences: ${preferences || "not specified"}
 - Trip description: ${description || "not specified"}
 - Trip note: ${note || "not specified"}
+- Trip weather (Day ${dayNumber}): ${weatherLine || "Weather unavailable"}
 - Current itinerary summary: ${itinerarySummary || "none"}
 - Day to generate: Day ${dayNumber}
 - User request for this edit: ${userRequest || "not specified"}
@@ -475,6 +496,15 @@ export async function generateSingleDayItinerary({
   }
 
   const client = new GoogleGenerativeAI(apiKey);
+  let weatherLine = "Weather unavailable";
+  try {
+    const weather = await getTripWeatherSummary({ destination, startDate, endDate });
+    const targetDate = addDaysToYmd(startDate, Math.max(0, Number(dayNumber || 1) - 1));
+    weatherLine = getWeatherLineForDate(weather?.days, targetDate);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "Unknown weather error");
+    console.warn(`[Trip weather day] destination="${destination}" day=${dayNumber} error=${message}`);
+  }
   const prompt = buildSingleDayPrompt({
     destination,
     startDate,
@@ -482,6 +512,7 @@ export async function generateSingleDayItinerary({
     preferences,
     description,
     note,
+    weatherLine,
     dayNumber,
     itinerarySummary,
     userRequest,

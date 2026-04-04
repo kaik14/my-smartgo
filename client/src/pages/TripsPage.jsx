@@ -98,6 +98,12 @@ export default function TripsPage() {
   const placesServiceRef = useRef(null);
   const coverRefreshInFlightRef = useRef(new Set());
 
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "SmartGo | My Trips";
+    }
+  }, []);
+
   const ensurePlacesService = async () => {
     if (placesServiceRef.current) return placesServiceRef.current;
     const apiKey = String(import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "").trim();

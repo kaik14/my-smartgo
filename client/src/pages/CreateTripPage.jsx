@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { CalendarIcon, SearchIcon } from "../components/icons";
@@ -52,12 +52,33 @@ const PREFS = [
 export default function CreateTripPage() {
   const navigate = useNavigate();
   const [destination, setDestination] = useState("");
-  const [startDate, setStartDate] = useState("2026-03-01");
-  const [endDate, setEndDate] = useState("2026-03-02");
+  const [startDate, setStartDate] = useState(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
+  const [endDate, setEndDate] = useState(() => {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const y = tomorrow.getFullYear();
+    const m = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const d = String(tomorrow.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [specialRequest, setSpecialRequest] = useState("");
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "SmartGo | Create Trip";
+    }
+  }, []);
 
   const destinationOptions = useMemo(() => {
     const featured = malaysiaLocations.featured.map((name) => ({ label: name, featured: true }));
@@ -113,6 +134,7 @@ export default function CreateTripPage() {
         start_date: startDate,
         end_date: endDate,
         preferences: selectedPreferenceLabels,
+        note: specialRequest.trim() ? specialRequest.trim() : undefined,
       });
 
       const tripId = created?.trip_id;
@@ -134,6 +156,7 @@ export default function CreateTripPage() {
         navigate(`/trips/${tripId}`, { state: { smartPlanGenerating: true } });
         void generateAiTripItinerary(tripId, {
           preferences: selectedPreferenceLabels.length ? selectedPreferenceLabels : undefined,
+          user_request: specialRequest.trim() ? specialRequest.trim() : undefined,
         })
           .then(() => {
             setSmartPlanProgress(tripId, {
@@ -288,6 +311,18 @@ export default function CreateTripPage() {
             <span style={{ fontSize: 13 }}>{pref.label} {pref.emoji}</span>
           </button>
         ))}
+      </div>
+
+      <div className="sectionTitle">Special Requests (Optional)</div>
+      <div className="inputWrap">
+        <textarea
+          className="input"
+          rows={4}
+          value={specialRequest}
+          onChange={(e) => setSpecialRequest(e.target.value)}
+          placeholder="Example: Keep total budget under RM 2,000, avoid long walks, prefer halal food..."
+          style={{ resize: "vertical" }}
+        />
       </div>
 
       <div style={{ height: 22 }} />

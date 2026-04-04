@@ -146,6 +146,12 @@ export default function ProfilePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "SmartGo | Profile";
+    }
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     if (!user?.user_id) {
       setFavorites([]);

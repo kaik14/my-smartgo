@@ -429,6 +429,12 @@ export default function NearbyPage() {
   const poiMarkerRefs = useRef([]);
   const placesServiceRef = useRef(null);
   const placesCacheRef = useRef(new Map());
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = "SmartGo | Nearby";
+    }
+  }, []);
   const debounceTimerRef = useRef(null);
   const locationLookupSeqRef = useRef(0);
   const weatherLookupSeqRef = useRef(0);
