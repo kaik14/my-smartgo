@@ -2643,6 +2643,7 @@ export default function TripDetailPage() {
         onToggleIntro={() => setPoiDetailIntroExpanded((value) => !value)}
         onClose={closePoiDetailPanel}
         canFavorite={Boolean(currentUser?.user_id)}
+        enableStreetView={true}
         isFavorite={(() => {
           const selectedPoiId = Number(selectedPoiDetailTarget?.poi?.poi_id ?? poiDetailData?.poi?.poi_id);
           if (Number.isInteger(selectedPoiId) && selectedPoiId > 0) {

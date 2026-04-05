@@ -1211,6 +1211,7 @@ export default function NearbyPage() {
           setPoiDetailIntroExpanded(false);
         }}
         canFavorite={true}
+        enableStreetView={true}
         isFavorite={(() => {
           const selectedPoiId = Number(selectedPoiDetailTarget?.poi?.poi_id ?? poiDetailData?.poi?.poi_id);
           if (Number.isInteger(selectedPoiId) && selectedPoiId > 0) {

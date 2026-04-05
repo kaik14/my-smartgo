@@ -19,13 +19,21 @@ export default function PoiDetailPanel({
   isFavorite,
   favoriteBusy,
   onToggleFavorite,
+  enableStreetView = false,
 }) {
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window !== "undefined" ? window.innerHeight : 800
   );
   const [mobilePanelOffsetY, setMobilePanelOffsetY] = useState(0);
   const [mobileDragging, setMobileDragging] = useState(false);
+  const [streetViewEnabled, setStreetViewEnabled] = useState(false);
+  const [streetViewStatus, setStreetViewStatus] = useState("idle");
+  const [streetViewMessage, setStreetViewMessage] = useState("");
   const dragStateRef = useRef({ startY: 0, startOffsetY: 0, active: false });
+  const streetViewContainerRef = useRef(null);
+  const streetViewRef = useRef(null);
+  const streetViewServiceRef = useRef(null);
+  const streetViewTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -46,12 +54,23 @@ export default function PoiDetailPanel({
     setMobilePanelOffsetY(0);
   }, [open, isDesktop, target?.dayPoiId, target?.poi?.poi_id]);
 
+  useEffect(() => {
+    if (!open) {
+      setStreetViewEnabled(false);
+      setStreetViewStatus("idle");
+      setStreetViewMessage("");
+      return;
+    }
+    setStreetViewEnabled(false);
+    setStreetViewStatus("idle");
+    setStreetViewMessage("");
+  }, [open, target?.dayPoiId, target?.poi?.poi_id]);
+
   const mobileMaxOffsetY = useMemo(() => Math.max(220, Math.round(viewportHeight * 0.72)), [viewportHeight]);
   const mobileCloseThresholdY = useMemo(() => Math.max(170, Math.round(viewportHeight * 0.46)), [viewportHeight]);
 
-  if (!open || !target) return null;
-
-  const poi = target.poi || {};
+  const safeTarget = target || {};
+  const poi = safeTarget.poi || {};
   const googlePlace = details?.google_place || null;
   const introText = String(
     details?.poi?.description || poi.description || googlePlace?.introduction || ""
@@ -79,6 +98,186 @@ export default function PoiDetailPanel({
   const typeLabel = String(poi.type || googlePlace?.primary_type_label || "Other")
     .replace(/\b\w/g, (char) => char.toUpperCase());
   const shouldClampIntro = introText.length > 220 && !introExpanded;
+  const placeId = String(googlePlace?.place_id || safeTarget?.placeId || "").trim();
+  const lat = Number(details?.poi?.lat ?? poi.lat ?? safeTarget?.lat);
+  const lng = Number(details?.poi?.lng ?? poi.lng ?? safeTarget?.lng);
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+
+  useEffect(() => {
+    let active = true;
+    let timeoutId = null;
+
+    if (!enableStreetView || !open || !streetViewEnabled) {
+      setStreetViewStatus("idle");
+      setStreetViewMessage("");
+      return () => {
+        active = false;
+      };
+    }
+
+    if (typeof window === "undefined") {
+      setStreetViewStatus("unavailable");
+      setStreetViewMessage("Street View unavailable");
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!placeId && !hasCoords) {
+      setStreetViewStatus("unavailable");
+      setStreetViewMessage("Street View unavailable");
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!window.google?.maps?.StreetViewService || !window.google?.maps?.StreetViewPanorama) {
+      setStreetViewStatus("unavailable");
+      setStreetViewMessage("Street View unavailable (Maps JS API not ready)");
+      return () => {
+        active = false;
+      };
+    }
+
+    setStreetViewStatus("loading");
+    setStreetViewMessage("");
+
+    try {
+      const service = streetViewServiceRef.current || new window.google.maps.StreetViewService();
+      streetViewServiceRef.current = service;
+
+      const requestByLocation = (location) => ({
+        location,
+        radius: 120,
+        source: window.google?.maps?.StreetViewSource?.OUTDOOR,
+      });
+
+    timeoutId = window.setTimeout(() => {
+      if (!active) return;
+      setStreetViewStatus("unavailable");
+      setStreetViewMessage("Street View unavailable (TIMEOUT)");
+    }, 6000);
+    streetViewTimeoutRef.current = timeoutId;
+
+      const handlePanorama = (data, status) => {
+        if (!active) return;
+        if (status !== "OK" || !data?.location) {
+          const safeStatus = status ? String(status) : "UNKNOWN";
+          setStreetViewStatus("unavailable");
+          setStreetViewMessage(`Street View unavailable (${safeStatus})`);
+          return;
+        }
+
+        const container = streetViewContainerRef.current;
+        if (!container) {
+          setStreetViewStatus("unavailable");
+          setStreetViewMessage("Street View unavailable (container missing)");
+          return;
+        }
+
+        let panorama = streetViewRef.current;
+        if (!panorama) {
+          panorama = new window.google.maps.StreetViewPanorama(container, {
+            pov: { heading: 0, pitch: 0 },
+            zoom: 0,
+            addressControl: false,
+            fullscreenControl: true,
+            motionTracking: false,
+            motionTrackingControl: false,
+          });
+          streetViewRef.current = panorama;
+        }
+
+        if (streetViewTimeoutRef.current) {
+          window.clearTimeout(streetViewTimeoutRef.current);
+          streetViewTimeoutRef.current = null;
+        }
+
+        if (data.location?.pano) {
+          panorama.setPano(data.location.pano);
+        } else if (data.location?.latLng) {
+          panorama.setPosition(data.location.latLng);
+        }
+
+        panorama.setVisible(true);
+        setStreetViewStatus("available");
+      };
+
+      if (hasCoords) {
+        service.getPanorama(requestByLocation({ lat, lng }), handlePanorama);
+        return () => {
+          active = false;
+          if (timeoutId) window.clearTimeout(timeoutId);
+          if (streetViewTimeoutRef.current) {
+            window.clearTimeout(streetViewTimeoutRef.current);
+            streetViewTimeoutRef.current = null;
+          }
+          if (streetViewRef.current) {
+            streetViewRef.current.setVisible(false);
+          }
+        };
+      }
+
+      if (placeId && window.google?.maps?.places?.PlacesService) {
+        const placesService =
+          streetViewServiceRef.current?.placesService ||
+          new window.google.maps.places.PlacesService(document.createElement("div"));
+        streetViewServiceRef.current.placesService = placesService;
+
+        placesService.getDetails({ placeId, fields: ["geometry"] }, (place, status) => {
+          if (!active) return;
+          if (status !== window.google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location) {
+            const safeStatus = status ? String(status) : "UNKNOWN";
+            setStreetViewStatus("unavailable");
+            setStreetViewMessage(`Street View unavailable (${safeStatus})`);
+            return;
+          }
+          const loc = place.geometry.location;
+          const location = {
+            lat: typeof loc.lat === "function" ? loc.lat() : Number(loc.lat),
+            lng: typeof loc.lng === "function" ? loc.lng() : Number(loc.lng),
+          };
+          if (!Number.isFinite(location.lat) || !Number.isFinite(location.lng)) {
+            setStreetViewStatus("unavailable");
+            setStreetViewMessage("Street View unavailable (no coords)");
+            return;
+          }
+          service.getPanorama(requestByLocation(location), handlePanorama);
+        });
+        return () => {
+          active = false;
+          if (timeoutId) window.clearTimeout(timeoutId);
+          if (streetViewTimeoutRef.current) {
+            window.clearTimeout(streetViewTimeoutRef.current);
+            streetViewTimeoutRef.current = null;
+          }
+          if (streetViewRef.current) {
+            streetViewRef.current.setVisible(false);
+          }
+        };
+      }
+
+      setStreetViewStatus("unavailable");
+      setStreetViewMessage("Street View unavailable (no coords)");
+    } catch {
+      if (active) {
+        setStreetViewStatus("unavailable");
+        setStreetViewMessage("Street View unavailable");
+      }
+    }
+
+    return () => {
+      active = false;
+      if (timeoutId) window.clearTimeout(timeoutId);
+      if (streetViewTimeoutRef.current) {
+        window.clearTimeout(streetViewTimeoutRef.current);
+        streetViewTimeoutRef.current = null;
+      }
+      if (streetViewRef.current) {
+        streetViewRef.current.setVisible(false);
+      }
+    };
+  }, [enableStreetView, open, streetViewEnabled, placeId, hasCoords, lat, lng]);
 
   const startDragAt = (clientY) => {
     if (isDesktop) return;
@@ -111,6 +310,8 @@ export default function PoiDetailPanel({
     setMobileDragging(false);
     dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
   };
+
+  if (!open || !target) return null;
 
   return (
     <div
@@ -214,6 +415,57 @@ export default function PoiDetailPanel({
       {imageUrl ? (
         <div style={poiDetailImageWrapStyle}>
           <img src={imageUrl} alt={poi.name || "POI image"} style={poiDetailImageStyle} referrerPolicy="no-referrer" />
+        </div>
+      ) : null}
+
+      {enableStreetView ? (
+        <div style={{ marginTop: 14 }}>
+          <div style={poiDetailSectionHeaderRowStyle}>
+            <div style={poiDetailSectionTitleStyle}>Street View</div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={streetViewEnabled}
+              onClick={() => {
+                const nextEnabled = !streetViewEnabled;
+                setStreetViewEnabled(nextEnabled);
+                setStreetViewStatus("idle");
+                setStreetViewMessage("");
+                if (!nextEnabled && streetViewRef.current) {
+                  streetViewRef.current.setVisible(false);
+                  streetViewRef.current = null;
+                }
+              }}
+              style={{
+                ...poiDetailSwitchBtnStyle,
+                ...(streetViewEnabled ? poiDetailSwitchBtnActiveStyle : null),
+              }}
+            >
+              <span
+                style={{
+                  ...poiDetailSwitchThumbStyle,
+                  ...(streetViewEnabled ? poiDetailSwitchThumbActiveStyle : null),
+                }}
+              />
+            </button>
+          </div>
+          {streetViewEnabled ? (
+            streetViewStatus === "available" || streetViewStatus === "loading" ? (
+              <div style={poiDetailStreetViewWrapStyle}>
+                <div ref={streetViewContainerRef} style={poiDetailStreetViewStyle} />
+                {streetViewStatus === "loading" ? (
+                  <div style={poiDetailStreetViewOverlayStyle}>Loading street view...</div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="muted" style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                <div>{streetViewMessage || "Street View unavailable (UNKNOWN)"}</div>
+                <div style={{ fontSize: 12 }}>
+                  Status: {streetViewStatus} | placeId: {placeId ? "yes" : "no"} | coords: {hasCoords ? "yes" : "no"} | mapsReady: {window.google?.maps ? "yes" : "no"}
+                </div>
+              </div>
+            )
+          ) : null}
         </div>
       ) : null}
 
@@ -472,6 +724,32 @@ const poiDetailImageStyle = {
   display: "block",
 };
 
+const poiDetailStreetViewWrapStyle = {
+  marginTop: 8,
+  borderRadius: 16,
+  overflow: "hidden",
+  border: "1px solid rgba(148,163,184,0.18)",
+  background: "rgba(248,250,252,0.9)",
+  position: "relative",
+};
+
+const poiDetailStreetViewStyle = {
+  width: "100%",
+  height: 240,
+};
+
+const poiDetailStreetViewOverlayStyle = {
+  position: "absolute",
+  inset: 0,
+  display: "grid",
+  placeItems: "center",
+  fontSize: 13,
+  fontWeight: 600,
+  color: "#334155",
+  background: "rgba(255,255,255,0.72)",
+  backdropFilter: "blur(4px)",
+};
+
 const poiDetailSectionTitleStyle = {
   fontSize: 15,
   fontWeight: 800,
@@ -501,6 +779,52 @@ const poiDetailTextActionStyle = {
   padding: "0 10px",
   fontSize: 12,
   fontWeight: 700,
+};
+
+const poiDetailSectionHeaderRowStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+};
+
+const poiDetailSwitchBtnStyle = {
+  width: 46,
+  height: 26,
+  borderRadius: 999,
+  border: "none",
+  background: "rgba(226,232,240,0.9)",
+  padding: 0,
+  position: "relative",
+  cursor: "pointer",
+  outline: "none",
+  boxShadow: "inset 0 0 0 1px rgba(203,213,225,0.9)",
+  appearance: "none",
+  WebkitAppearance: "none",
+  MozAppearance: "none",
+  transition: "background 0.2s ease, border-color 0.2s ease",
+};
+
+const poiDetailSwitchBtnActiveStyle = {
+  background: "rgba(34,197,94,0.9)",
+  borderColor: "rgba(34,197,94,0.55)",
+};
+
+const poiDetailSwitchThumbStyle = {
+  position: "absolute",
+  top: "50%",
+  left: 2,
+  width: 22,
+  height: 22,
+  borderRadius: 999,
+  background: "#fff",
+  boxShadow: "none",
+  transform: "translateY(-50%)",
+  transition: "transform 0.2s ease",
+};
+
+const poiDetailSwitchThumbActiveStyle = {
+  transform: "translate(20px, -50%)",
 };
 
 const poiDetailReviewSectionCardStyle = {
