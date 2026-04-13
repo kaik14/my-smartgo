@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, LocationArrowIcon } from "../components/icons";
+import { ChevronDownIcon, PinIcon } from "../components/icons";
 import PoiDetailPanel from "../components/PoiDetailPanel";
 import { createFavoriteFromPlace, deleteFavorite as deleteFavoriteApi, getFavorites } from "../services/api";
 import malaysiaLocations from "../data/malaysiaLocations";
@@ -1160,7 +1160,7 @@ export default function NearbyPage() {
             disabled={locating}
             title={locating ? "Locating..." : "Locate me"}
           >
-            <LocationArrowIcon />
+            <PinIcon size={20} />
           </button>
         </div>
 
