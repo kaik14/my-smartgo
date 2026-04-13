@@ -4,8 +4,8 @@ import { floatingRouteCtaWrapStyle, floatingAiCtaStyle, floatingRouteCtaStyle } 
 export default function TripDetailFloatingActions({
   isMobileLayout,
   floatingRouteCtaRight,
-  navigate,
-  tripId,
+  openAiChatModal,
+  hideAiButton,
   setRouteEditError,
   setDraggingDayPoi,
   setRouteEditMode,
@@ -24,25 +24,27 @@ export default function TripDetailFloatingActions({
         gap: isMobileLayout ? 8 : floatingRouteCtaWrapStyle.gap,
       }}
     >
-      <button
-        type="button"
-        className="secondaryBtn"
-        style={{
-          ...floatingAiCtaStyle,
-          ...(isMobileLayout
-            ? {
-                width: 46,
-                minWidth: 46,
-                height: 46,
-                minHeight: 46,
-              }
-            : null),
-        }}
-        onClick={() => navigate(`/trips/${tripId}/ai-chat`)}
-        aria-label="Open AI trip chat"
-      >
-        <AiChatIcon size={20} />
-      </button>
+      {!hideAiButton ? (
+        <button
+          type="button"
+          className="secondaryBtn"
+          style={{
+            ...floatingAiCtaStyle,
+            ...(isMobileLayout
+              ? {
+                  width: 46,
+                  minWidth: 46,
+                  height: 46,
+                  minHeight: 46,
+                }
+              : null),
+          }}
+          onClick={openAiChatModal}
+          aria-label="Open AI trip chat"
+        >
+          <AiChatIcon size={20} />
+        </button>
+      ) : null}
       <button
         type="button"
         className="primaryBtn"

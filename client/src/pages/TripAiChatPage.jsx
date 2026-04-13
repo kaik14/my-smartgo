@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import axios from "axios";
-import { AiChatIcon, ArrowLeftIcon } from "../components/icons";
+import { AiChatIcon, CloseIcon, SendIcon } from "../components/icons";
 import {
   chatWithTripAssistant,
   generateAiTripDayItinerary,
@@ -89,6 +89,11 @@ function parseEnglishNumberToken(raw) {
 
 function parseCountToken(raw, fallback = 1) {
   return parseChineseNumberToken(raw) ?? parseEnglishNumberToken(raw) ?? fallback;
+}
+
+function wrapperStyleHasSizing(style) {
+  if (!style) return false;
+  return style.height != null || style.maxHeight != null || style.top != null || style.bottom != null;
 }
 
 function getLatestUserMessageText(messages) {
@@ -315,6 +320,7 @@ function MessageBubble({ role, children }) {
     <div
       style={{
         justifySelf: role === "user" ? "end" : "start",
+        alignSelf: "start",
         maxWidth: "88%",
         borderRadius: 14,
         padding: "9px 11px",
@@ -344,9 +350,9 @@ function MessageBubble({ role, children }) {
   );
 }
 
-export default function TripAiChatPage() {
-  const navigate = useNavigate();
-  const { tripId } = useParams();
+export default function TripAiChatPage({ tripId: tripIdProp, embedded = false, onClose, onApplied, wrapperStyle }) {
+  const { tripId: tripIdFromRoute } = useParams();
+  const tripId = tripIdProp ?? tripIdFromRoute;
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -355,7 +361,6 @@ export default function TripAiChatPage() {
   const [sending, setSending] = useState(false);
   const [applying, setApplying] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [actionSuccess, setActionSuccess] = useState("");
   const [typingTick, setTypingTick] = useState(0);
   const [streamingReply, setStreamingReply] = useState("");
 
@@ -365,7 +370,6 @@ export default function TripAiChatPage() {
     setError("");
     setDetail(null);
     setActionError("");
-    setActionSuccess("");
     setMessages(loadStoredMessages(tripId));
 
     (async () => {
@@ -403,20 +407,12 @@ export default function TripAiChatPage() {
   const isStreamingReply = Boolean(streamingReply);
   const busySending = sending || isStreamingReply;
   const pendingDateChange = useMemo(() => parseTripDateChangesFromLatestUserMessage(messages, trip), [messages, trip]);
-  const mentionedDayNumbers = useMemo(() => extractMentionedDayNumbersFromLatestUserMessage(messages), [messages]);
-  const canApply = useMemo(
-    () =>
-      Boolean(
-        trip && messages.some((m) => m.role === "user") && !applying && !busySending && !pendingDateChange.warning
-      ),
-    [trip, messages, applying, busySending, pendingDateChange.warning]
-  );
-
   useEffect(() => {
+    if (embedded) return;
     if (typeof document === "undefined") return;
     const titleText = String(trip?.title || trip?.destination || "").trim();
     document.title = titleText ? `SmartGo | ${titleText} Chat` : "SmartGo | Trip Chat";
-  }, [trip?.title, trip?.destination]);
+  }, [embedded, trip?.title, trip?.destination]);
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -428,7 +424,6 @@ export default function TripAiChatPage() {
     setInput("");
     setSending(true);
     setActionError("");
-    setActionSuccess("");
 
     try {
       const response = await fetch(`/api/trips/${tripId}/ai-chat-stream`, {
@@ -506,12 +501,18 @@ export default function TripAiChatPage() {
       setMessages((prev) => [...prev, createMsg("assistant", finalReply)]);
       setStreamingReply("");
       setSending(false);
+      if (trip) {
+        await applyAndRegenerate(text);
+      }
     } catch (streamErr) {
       setStreamingReply("");
       try {
         const res = await chatWithTripAssistant(tripId, { message: text, history: historyForApi });
         const reply = String(res?.reply || "").trim() || "I can help adjust this trip. Tell me what to change.";
         setMessages((prev) => [...prev, createMsg("assistant", reply)]);
+        if (trip) {
+          await applyAndRegenerate(text);
+        }
       } catch (err) {
         const message = axios.isAxiosError(err)
           ? err.response?.data?.error || err.message
@@ -525,25 +526,30 @@ export default function TripAiChatPage() {
     }
   };
 
-  const applyAndRegenerate = async () => {
-    if (!trip || applying || pendingDateChange.warning) return;
+  const applyAndRegenerate = async (latestUserTextOverride) => {
+    if (!trip || applying) return;
+    const mergedMessages = latestUserTextOverride
+      ? [...messages, { role: "user", content: latestUserTextOverride }]
+      : messages;
+    const nextPendingDateChange = parseTripDateChangesFromLatestUserMessage(mergedMessages, trip);
+    const nextMentionedDayNumbers = extractMentionedDayNumbersFromLatestUserMessage(mergedMessages);
+    if (nextPendingDateChange.warning) return;
     setApplying(true);
     setActionError("");
-    setActionSuccess("");
     try {
-      const latestUserText = getLatestUserMessageText(messages);
+      const latestUserText = String(latestUserTextOverride || getLatestUserMessageText(mergedMessages) || "").trim();
       const patchPayload = {};
-      if (pendingDateChange.hasChange) {
-        patchPayload.start_date = pendingDateChange.nextStartDate;
-        patchPayload.end_date = pendingDateChange.nextEndDate;
+      if (nextPendingDateChange.hasChange) {
+        patchPayload.start_date = nextPendingDateChange.nextStartDate;
+        patchPayload.end_date = nextPendingDateChange.nextEndDate;
       }
       if (Object.keys(patchPayload).length > 0) {
         await patchTrip(trip.trip_id, patchPayload);
       }
-      const validDayTargets = mentionedDayNumbers.filter(
+      const validDayTargets = nextMentionedDayNumbers.filter(
         (n) => n >= 1 && n <= getInclusiveDayCount(
-          pendingDateChange.hasChange ? pendingDateChange.nextStartDate : trip.start_date,
-          pendingDateChange.hasChange ? pendingDateChange.nextEndDate : trip.end_date
+          nextPendingDateChange.hasChange ? nextPendingDateChange.nextStartDate : trip.start_date,
+          nextPendingDateChange.hasChange ? nextPendingDateChange.nextEndDate : trip.end_date
         )
       );
 
@@ -562,13 +568,7 @@ export default function TripAiChatPage() {
 
       const refreshed = await getTripDetail(trip.trip_id);
       setDetail(refreshed);
-      setActionSuccess(
-        validDayTargets.length > 0
-          ? `AI instructions applied. Regenerated Day ${validDayTargets.join(", Day ")}${pendingDateChange.hasChange ? " and updated dates" : ""}.`
-          : pendingDateChange.hasChange
-            ? `AI instructions applied. Dates updated (${pendingDateChange.nextStartDate} -> ${pendingDateChange.nextEndDate}) and itinerary regenerated.`
-            : "AI instructions applied and itinerary regenerated."
-      );
+      if (typeof onApplied === "function") onApplied(refreshed);
     } catch (err) {
       const message = axios.isAxiosError(err) ? err.response?.data?.error || err.message : "Failed to apply AI changes";
       setActionError(message);
@@ -582,9 +582,11 @@ export default function TripAiChatPage() {
   if (error) {
     return (
       <div>
-        <button className="secondaryBtn" type="button" onClick={() => navigate(`/trips/${tripId}`)}>
-          Back
-        </button>
+        {onClose ? (
+          <button className="secondaryBtn" type="button" onClick={onClose}>
+            Close
+          </button>
+        ) : null}
         <div style={{ color: "#dc2626", marginTop: 12 }}>{error}</div>
       </div>
     );
@@ -594,41 +596,32 @@ export default function TripAiChatPage() {
     <div
       style={{
         display: "grid",
-        gap: 12,
-        minHeight: "calc(100vh - 84px)",
-        marginTop: "calc(-1 * clamp(18px, 2.4vw, 28px))",
+        gap: 0,
+        ...(embedded
+          ? wrapperStyleHasSizing(wrapperStyle)
+            ? { minHeight: 0 }
+            : { height: "100%", minHeight: "100%" }
+          : {
+              minHeight: "calc(100vh - 84px)",
+              marginTop: "calc(-1 * clamp(18px, 2.4vw, 28px))",
+            }),
+        ...(wrapperStyle || null),
       }}
     >
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <button className="secondaryBtn" type="button" onClick={() => navigate(`/trips/${tripId}`)}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <ArrowLeftIcon size={16} />
-            Back to Trip
-          </span>
-        </button>
-        <button
-          className="secondaryBtn"
-          type="button"
-          onClick={() => {
-            setMessages([]);
-            setStreamingReply("");
-          }}
-          disabled={busySending || applying}
-        >
-          Clear Chat
-        </button>
-      </div>
-
       <section
         style={{
           borderRadius: 20,
           border: "1px solid rgba(148,163,184,0.25)",
           background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96))",
           boxShadow: "0 16px 32px rgba(15,23,42,0.07)",
-          padding: "0 14px 14px",
+          padding: "0 12px 12px",
+          height: embedded ? "100%" : "auto",
+          display: "grid",
+          gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+          minHeight: 0,
         }}
       >
-        <div className="row" style={{ alignItems: "center", gap: 10, marginBottom: 8, justifyContent: "flex-start" }}>
+        <div className="row" style={{ alignItems: "center", gap: 10, marginBottom: 8, justifyContent: "space-between" }}>
           <div style={{ minWidth: 0 }}>
             <div
               className="h1"
@@ -656,6 +649,75 @@ export default function TripAiChatPage() {
               {trip?.title || "Trip"} · {trip?.destination || "-"}
             </div>
           </div>
+          {onClose ? (
+            <button
+              className="secondaryBtn"
+              type="button"
+              onClick={onClose}
+              aria-label="Close AI chat"
+              style={{
+                width: 34,
+                minWidth: 34,
+                height: 34,
+                minHeight: 34,
+                borderRadius: 999,
+                padding: 0,
+                display: "inline-grid",
+                placeItems: "center",
+                flexShrink: 0,
+              }}
+            >
+              <CloseIcon size={15} />
+            </button>
+          ) : null}
+        </div>
+
+        <div
+          style={{
+            marginBottom: 8,
+            borderRadius: 12,
+            border: "1px solid rgba(148,163,184,0.18)",
+            background: "rgba(248,250,252,0.75)",
+            padding: "8px 10px",
+            fontSize: 12,
+            lineHeight: 1.45,
+            display: "grid",
+            gap: 6,
+          }}
+        >
+          {applying ? (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                width: "fit-content",
+                padding: "7px 10px",
+                borderRadius: 999,
+                border: "1px solid rgba(14,165,233,0.2)",
+                background: "rgba(14,165,233,0.06)",
+                color: "#0369a1",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: "#0ea5e9",
+                  boxShadow: "0 0 0 6px rgba(14,165,233,0.12)",
+                }}
+              />
+              AI is editing your trip...
+            </div>
+          ) : (
+            <div className="muted" style={{ fontSize: 12 }}>
+              Send your request and AI will update the itinerary directly.
+            </div>
+          )}
         </div>
 
         <div
@@ -663,43 +725,59 @@ export default function TripAiChatPage() {
             borderRadius: 16,
             border: "1px solid rgba(148,163,184,0.18)",
             background: "rgba(255,255,255,0.9)",
-            minHeight: 360,
-            maxHeight: "56vh",
+            minHeight: 0,
+            height: "100%",
             overflowY: "auto",
             padding: 10,
             display: "grid",
+            alignContent: "start",
             gap: 8,
           }}
         >
           {messages.length === 0 ? (
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-              Try asking: "Day 2 more food spots", "replace a museum with shopping", or "make the route less rushed".
+            <div style={{ justifySelf: "start", width: "fit-content", maxWidth: "68%" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: "#7c3aed", letterSpacing: 0.2 }}>
+                AI
+              </div>
+              <div
+                style={{
+                  borderRadius: 12,
+                  padding: "6px 8px",
+                  whiteSpace: "pre-wrap",
+                  lineHeight: 1.35,
+                  fontSize: 12,
+                  background: "linear-gradient(135deg, rgba(124,58,237,0.12), rgba(34,197,94,0.1))",
+                  color: "#0f172a",
+                  border: "1px solid rgba(124,58,237,0.18)",
+                  boxShadow: "0 8px 18px rgba(124,58,237,0.06)",
+                }}
+              >
+                Try asking: "Day 2 more food spots", "replace a museum with shopping", or "make the route less rushed".
+              </div>
             </div>
-          ) : (
-            <>
-              {messages.map((m) => (
-                <MessageBubble key={m.id} role={m.role}>
-                  {m.content}
-                </MessageBubble>
-              ))}
-              {sending ? (
-                <MessageBubble role="assistant">
-                  <span>{typingLabel}</span>
-                  <span style={{ marginLeft: 8, color: "#64748b", letterSpacing: 2 }}>...</span>
-                </MessageBubble>
-              ) : null}
-              {isStreamingReply ? (
-                <MessageBubble role="assistant">
-                  {streamingReply}
-                  <span style={{ opacity: 0.7 }}>|</span>
-                </MessageBubble>
-              ) : null}
-            </>
-          )}
+          ) : null}
+          {messages.map((m) => (
+            <MessageBubble key={m.id} role={m.role}>
+              {m.content}
+            </MessageBubble>
+          ))}
+          {sending ? (
+            <MessageBubble role="assistant">
+              <span>{typingLabel}</span>
+              <span style={{ marginLeft: 8, color: "#64748b", letterSpacing: 2 }}>...</span>
+            </MessageBubble>
+          ) : null}
+          {isStreamingReply ? (
+            <MessageBubble role="assistant">
+              {streamingReply}
+              <span style={{ opacity: 0.7 }}>|</span>
+            </MessageBubble>
+          ) : null}
         </div>
 
         <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-          <textarea
+          <div className="row" style={{ gap: 8, alignItems: "stretch" }}>
+            <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -708,20 +786,40 @@ export default function TripAiChatPage() {
                 sendMessage();
               }
             }}
-            rows={6}
+            rows={3}
             placeholder="Tell AI what to adjust in this trip..."
             disabled={busySending || applying}
             style={{
-              width: "100%",
+              flex: 1,
               borderRadius: 14,
               border: "1px solid rgba(148,163,184,0.28)",
-              padding: 10,
-              minHeight: 160,
+              padding: "10px 12px",
+              minHeight: 72,
               resize: "vertical",
               font: "inherit",
               outline: "none",
             }}
           />
+            <button
+              className="primaryBtn"
+              type="button"
+              onClick={sendMessage}
+              disabled={busySending || applying || !input.trim()}
+              aria-label="Send"
+              style={{
+                width: 42,
+                minWidth: 42,
+                height: 42,
+                minHeight: 42,
+                borderRadius: 12,
+                padding: 0,
+                display: "inline-grid",
+                placeItems: "center",
+              }}
+            >
+              <SendIcon size={16} />
+            </button>
+          </div>
 
           {pendingDateChange.warning ? <div style={{ color: "#b45309", fontSize: 12 }}>{pendingDateChange.warning}</div> : null}
 
@@ -749,44 +847,10 @@ export default function TripAiChatPage() {
                   Parsed from latest message: {pendingDateChange.reasons.join(", ")}
                 </div>
               ) : null}
-              {mentionedDayNumbers.length ? (
-                <div className="muted" style={{ marginTop: 4 }}>
-                  Incremental apply target: Day {mentionedDayNumbers.join(", Day ")}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {!pendingDateChange.hasChange && mentionedDayNumbers.length ? (
-            <div
-              style={{
-                borderRadius: 12,
-                border: "1px solid rgba(16,185,129,0.18)",
-                background: "rgba(16,185,129,0.05)",
-                padding: "8px 10px",
-                fontSize: 12,
-                color: "#065f46",
-              }}
-            >
-              Incremental apply preview: only Day {mentionedDayNumbers.join(", Day ")} will be regenerated.
             </div>
           ) : null}
 
           {actionError ? <div style={{ color: "#dc2626", fontSize: 13 }}>{actionError}</div> : null}
-          {actionSuccess ? <div style={{ color: "#059669", fontSize: 13 }}>{actionSuccess}</div> : null}
-
-          <div className="row" style={{ gap: 10, justifyContent: "space-between", alignItems: "center" }}>
-            <div className="muted" style={{ fontSize: 12 }}>
-              Chat replies are contextual. Regeneration uses recent chat instructions and date preview.
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <button className="secondaryBtn" type="button" onClick={sendMessage} disabled={busySending || applying || !input.trim()}>
-                {sending ? "Sending..." : isStreamingReply ? "Generating..." : "Send"}
-              </button>
-              <button className="primaryBtn" type="button" onClick={applyAndRegenerate} disabled={!canApply || busySending}>
-                {applying ? "Applying..." : "Apply & Regenerate"}
-              </button>
-            </div>
-          </div>
         </div>
       </section>
     </div>

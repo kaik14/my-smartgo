@@ -13,6 +13,7 @@ import {
 export default function TripDetailHeroMap({
   navigate,
   mapContainerRef,
+  sectionRef,
   mapLoading,
   mapError,
   mapPoints,
@@ -21,7 +22,7 @@ export default function TripDetailHeroMap({
   recommendedPoisError,
 }) {
   return (
-    <section style={heroMapPanelStyle}>
+    <section style={heroMapPanelStyle} ref={sectionRef}>
       <div style={mapTopBarStyle}>
         <button className="secondaryBtn" type="button" onClick={() => navigate("/trips")}>
           Back

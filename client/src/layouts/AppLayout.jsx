@@ -17,8 +17,7 @@ export default function AppLayout() {
   const isWide = isNearbyRoute;
   const hideBottomNav =
     location.pathname.startsWith("/profile") ||
-    /^\/trips\/[^/]+$/.test(location.pathname) ||
-    /^\/trips\/[^/]+\/ai-chat$/.test(location.pathname);
+    /^\/trips\/[^/]+$/.test(location.pathname);
 
   return (
     <>

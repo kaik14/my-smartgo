@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CloseIcon } from "./icons";
 
 const errorTextStyle = {
   color: "#dc2626",
@@ -8,6 +9,11 @@ const errorTextStyle = {
 export default function PoiDetailPanel({
   open,
   isDesktop,
+  desktopPlacement = "right",
+  wrapperStyle,
+  desktopRightOffset,
+  desktopTopOffset,
+  desktopBottomOffset,
   target,
   loading,
   error,
@@ -313,21 +319,53 @@ export default function PoiDetailPanel({
 
   if (!open || !target) return null;
 
-  return (
-    <div
-      style={
-        isDesktop
-          ? poiDetailDesktopWrapStyle
-          : {
-              ...poiDetailMobileWrapStyle,
-              transform: `translateY(${Math.round(mobilePanelOffsetY)}px)`,
-              transition: mobileDragging ? "none" : "transform 0.2s ease",
+  const isDocked = Boolean(wrapperStyle);
+  const isDesktopModalPlacement = !isDocked && isDesktop && desktopPlacement === "modal";
+  const wrapStyle = isDocked
+    ? { ...poiDetailDockWrapStyle, ...wrapperStyle }
+    : isDesktop
+      ? isDesktopModalPlacement
+        ? poiDetailDesktopModalWrapStyle
+        : Number.isFinite(desktopRightOffset)
+          ? {
+              ...poiDetailDesktopWrapStyle,
+              right: desktopRightOffset,
+              ...(Number.isFinite(desktopTopOffset) ? { top: desktopTopOffset } : null),
+              ...(Number.isFinite(desktopBottomOffset)
+                ? {
+                    bottom: desktopBottomOffset,
+                    maxHeight: undefined,
+                  }
+                : null),
             }
-      }
-      role="dialog"
-      aria-modal="false"
-      aria-label="POI details"
-    >
+          : poiDetailDesktopWrapStyle
+      : {
+          ...poiDetailMobileWrapStyle,
+          transform: `translateY(${Math.round(mobilePanelOffsetY)}px)`,
+          transition: mobileDragging ? "none" : "transform 0.2s ease",
+        };
+
+  return (
+    <>
+      {isDesktopModalPlacement ? (
+        <div
+          style={poiDetailDesktopBackdropStyle}
+          aria-hidden="true"
+          onClick={() => {
+            setMobileDragging(false);
+            setMobilePanelOffsetY(0);
+            dragStateRef.current = { startY: 0, startOffsetY: 0, active: false };
+            onClose();
+          }}
+        />
+      ) : null}
+      <div
+        style={wrapStyle}
+        role="dialog"
+        aria-modal={isDesktopModalPlacement ? "true" : "false"}
+        aria-label="POI details"
+        onClick={isDesktopModalPlacement ? (event) => event.stopPropagation() : undefined}
+      >
       <div style={poiDetailStickyHeaderStyle}>
         <div
           style={{
@@ -375,8 +413,9 @@ export default function PoiDetailPanel({
               onClose();
             }}
             style={poiDetailCloseBtnStyle}
+            aria-label="Close POI details"
           >
-            x
+            <CloseIcon size={15} />
           </button>
         </div>
       </div>
@@ -579,7 +618,8 @@ export default function PoiDetailPanel({
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -596,6 +636,40 @@ const poiDetailDesktopWrapStyle = {
   boxShadow: "0 24px 50px rgba(15,23,42,0.18)",
   padding: "0 12px 16px",
   zIndex: 60,
+};
+
+const poiDetailDesktopBackdropStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15,23,42,0.24)",
+  backdropFilter: "blur(2px)",
+  WebkitBackdropFilter: "blur(2px)",
+  zIndex: 89,
+};
+
+const poiDetailDesktopModalWrapStyle = {
+  position: "fixed",
+  top: 92,
+  left: "50%",
+  transform: "translateX(-50%)",
+  width: "min(420px, calc(100vw - 24px))",
+  maxHeight: "calc(100vh - 116px)",
+  overflowY: "auto",
+  background: "rgba(255,255,255,0.98)",
+  border: "1px solid rgba(148,163,184,0.18)",
+  borderRadius: 22,
+  boxShadow: "0 24px 50px rgba(15,23,42,0.18)",
+  padding: "0 12px 16px",
+  zIndex: 90,
+};
+
+const poiDetailDockWrapStyle = {
+  overflowY: "auto",
+  background: "rgba(255,255,255,0.98)",
+  border: "1px solid rgba(148,163,184,0.18)",
+  borderRadius: 22,
+  boxShadow: "0 24px 50px rgba(15,23,42,0.18)",
+  padding: "0 12px 16px",
 };
 
 const poiDetailMobileWrapStyle = {

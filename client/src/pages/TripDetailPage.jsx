@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import PoiDetailPanel from "../components/PoiDetailPanel";
@@ -95,7 +95,15 @@ import TripDetailModals from "./trip-detail/components/TripDetailModals";
 import TripDetailHeroMap from "./trip-detail/components/TripDetailHeroMap";
 import TripDetailOverviewPanels from "./trip-detail/components/TripDetailOverviewPanels";
 import TripDetailFloatingActions from "./trip-detail/components/TripDetailFloatingActions";
+import TripAiChatPage from "./TripAiChatPage";
 export default function TripDetailPage() {
+  const CHAT_DOCK_DESKTOP_MIN_WIDTH = 280;
+  const CHAT_DOCK_DESKTOP_MAX_WIDTH = 420;
+  const CHAT_DOCK_DESKTOP_NICE_MIN_WIDTH = 320;
+  const CHAT_DOCK_RIGHT_OFFSET = 16;
+  const CHAT_DOCK_MIN_GAP = 16;
+  const CHAT_DOCK_MIN_LEFT_MARGIN = 16;
+
   const location = useLocation();
   const navigate = useNavigate();
   const { tripId } = useParams();
@@ -132,6 +140,11 @@ export default function TripDetailPage() {
   const [tripDateDraft, setTripDateDraft] = useState({ start_date: "", end_date: "" });
   const [savingTripDates, setSavingTripDates] = useState(false);
   const [tripDatesError, setTripDatesError] = useState("");
+  const [tripAiChatModalOpen, setTripAiChatModalOpen] = useState(false);
+  const [forceCompactChatModal, setForceCompactChatModal] = useState(false);
+  const [chatDockWidth, setChatDockWidth] = useState(360);
+  const [pageShiftX, setPageShiftX] = useState(0);
+  const [desktopChatDockMetrics, setDesktopChatDockMetrics] = useState({ top: 16, height: 320 });
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth : 1024
   );
@@ -170,7 +183,19 @@ export default function TripDetailPage() {
   const [recommendedCityPickerError, setRecommendedCityPickerError] = useState("");
   const [recommendedCitySwitching, setRecommendedCitySwitching] = useState(false);
 
+  const isDesktopPoiDetailLayout = viewportWidth >= 960;
+  const isMobileLayout = viewportWidth <= 640;
+  const isVeryNarrowMobile = viewportWidth <= 420;
+
+  const isPoiDockOpen = poiDetailPanelOpen && Boolean(selectedPoiDetailTarget);
+  const rightDockOpen = Boolean(tripAiChatModalOpen || isPoiDockOpen);
+  const rightDockOwner = tripAiChatModalOpen ? "chat" : isPoiDockOpen ? "poi" : null;
+  const isDesktopRightDock = rightDockOpen && isDesktopPoiDetailLayout && !forceCompactChatModal;
+  const desktopRightReserve = isDesktopRightDock ? chatDockWidth + CHAT_DOCK_RIGHT_OFFSET + CHAT_DOCK_MIN_GAP : 0;
+
   const mapContainerRef = useRef(null);
+  const heroSectionRef = useRef(null);
+  const pageShellRef = useRef(null);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
   const routeRendererRefs = useRef([]);
@@ -193,6 +218,21 @@ export default function TripDetailPage() {
   const recommendedLocationReqSeqRef = useRef(0);
   const favoritePoiIdByPlaceIdRef = useRef(new Map());
   const placeDetailPanelCacheRef = useRef(new Map());
+  const pageShiftXRef = useRef(0);
+  const chatDockWidthRef = useRef(360);
+  const chatDockMetricsRef = useRef({ top: 16, height: 320 });
+
+  useEffect(() => {
+    pageShiftXRef.current = pageShiftX;
+  }, [pageShiftX]);
+
+  useEffect(() => {
+    chatDockWidthRef.current = chatDockWidth;
+  }, [chatDockWidth]);
+
+  useEffect(() => {
+    chatDockMetricsRef.current = desktopChatDockMetrics;
+  }, [desktopChatDockMetrics]);
 
   useEffect(() => {
     setActiveTab("overview");
@@ -332,6 +372,11 @@ export default function TripDetailPage() {
   }, [detail?.trip?.trip_id, detail?.trip?.note, detail?.days]);
 
   useEffect(() => {
+    setTripAiChatModalOpen(false);
+    setForceCompactChatModal(false);
+  }, [tripId]);
+
+  useEffect(() => {
     let cancelled = false;
     const rawUser = typeof window !== "undefined" ? localStorage.getItem("smartgo_user") : null;
     let user = null;
@@ -382,17 +427,141 @@ export default function TripDetailPage() {
       const drawerEl = drawerRef.current;
       if (!drawerEl) {
         setFloatingRouteCtaRight(16);
-        return;
+        return 16;
       }
       const rect = drawerEl.getBoundingClientRect();
-      const nextRight = Math.max(16, Math.round(window.innerWidth - rect.right));
+      const baseRight = Math.max(16, Math.round(window.innerWidth - rect.right));
+      const dockActive = window.innerWidth >= 960 && rightDockOpen && !forceCompactChatModal;
+      const minRight = dockActive
+        ? Math.round(chatDockWidthRef.current + CHAT_DOCK_RIGHT_OFFSET + CHAT_DOCK_MIN_GAP)
+        : 16;
+      const nextRight = Math.max(baseRight, minRight);
       setFloatingRouteCtaRight(nextRight);
+      return nextRight;
     };
 
-    updateFloatingCtaPosition();
+    let rafId = 0;
+    let frames = 0;
+    let stableFrames = 0;
+    let prevRight = Number.NaN;
+    const settlePosition = () => {
+      const currentRight = updateFloatingCtaPosition();
+      frames += 1;
+      if (Number.isFinite(prevRight) && Math.abs(currentRight - prevRight) < 1) stableFrames += 1;
+      else stableFrames = 0;
+      prevRight = currentRight;
+      if (frames < 50 && stableFrames < 6) rafId = window.requestAnimationFrame(settlePosition);
+    };
+
+    settlePosition();
+
+    const shell = pageShellRef.current;
+    const handleTransitionEnd = (event) => {
+      if (!event || event.propertyName !== "transform") return;
+      updateFloatingCtaPosition();
+    };
+    if (shell) shell.addEventListener("transitionend", handleTransitionEnd);
     window.addEventListener("resize", updateFloatingCtaPosition);
-    return () => window.removeEventListener("resize", updateFloatingCtaPosition);
-  }, [tripId, activeTab, detail]);
+    return () => {
+      window.removeEventListener("resize", updateFloatingCtaPosition);
+      if (shell) shell.removeEventListener("transitionend", handleTransitionEnd);
+      if (rafId) window.cancelAnimationFrame(rafId);
+    };
+  }, [tripId, activeTab, detail, rightDockOpen, forceCompactChatModal, pageShiftX]);
+
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const isDesktopLayout = viewportWidth >= 960;
+
+    if (!rightDockOpen || !isDesktopLayout) {
+      setForceCompactChatModal(false);
+      setPageShiftX((prev) => {
+        if (prev === 0) return prev;
+        pageShiftXRef.current = 0;
+        return 0;
+      });
+      return undefined;
+    }
+
+    const clampInt = (value, min, max) => Math.min(max, Math.max(min, Math.round(value)));
+
+    const updateDockLayout = () => {
+      const heroRect = heroSectionRef.current?.getBoundingClientRect?.();
+      const drawerRect = drawerRef.current?.getBoundingClientRect?.();
+      const shellRect = pageShellRef.current?.getBoundingClientRect?.();
+      if (!shellRect) return;
+
+      const currentShift = pageShiftXRef.current || 0;
+      const anchorRight = Math.max(Number(drawerRect?.right || 0), Number(heroRect?.right || 0));
+      const originalAnchorRight = anchorRight + currentShift;
+      const originalLeft = Number(shellRect.left || 0) + currentShift;
+      const maxShift = Math.max(0, Math.round(originalLeft - CHAT_DOCK_MIN_LEFT_MARGIN));
+
+      const viewWidth = window.innerWidth;
+      const minDockWidth = viewWidth >= 1200 ? CHAT_DOCK_DESKTOP_NICE_MIN_WIDTH : CHAT_DOCK_DESKTOP_MIN_WIDTH;
+      const preferredDockWidth = clampInt(viewWidth * 0.32, minDockWidth, CHAT_DOCK_DESKTOP_MAX_WIDTH);
+      const baseOverlap = Math.round(
+        originalAnchorRight + CHAT_DOCK_MIN_GAP - (viewWidth - CHAT_DOCK_RIGHT_OFFSET)
+      );
+      const overlapAtMin = baseOverlap + CHAT_DOCK_DESKTOP_MIN_WIDTH;
+      const cannotFitDock = overlapAtMin > maxShift + 2;
+
+      if (cannotFitDock) {
+        setForceCompactChatModal(true);
+        setChatDockWidth((prev) => {
+          const next = preferredDockWidth;
+          if (Math.abs(prev - next) < 1) return prev;
+          chatDockWidthRef.current = next;
+          return next;
+        });
+        setPageShiftX((prev) => {
+          if (prev === 0) return prev;
+          pageShiftXRef.current = 0;
+          return 0;
+        });
+        return;
+      }
+
+      setForceCompactChatModal(false);
+      const maxDockWidthAllowedByShift = Math.round(maxShift - baseOverlap);
+      const nextDockWidth = clampInt(
+        Math.min(preferredDockWidth, maxDockWidthAllowedByShift),
+        minDockWidth,
+        CHAT_DOCK_DESKTOP_MAX_WIDTH
+      );
+
+      setChatDockWidth((prev) => {
+        if (Math.abs(prev - nextDockWidth) < 1) return prev;
+        chatDockWidthRef.current = nextDockWidth;
+        return nextDockWidth;
+      });
+
+      const overlap = baseOverlap + nextDockWidth;
+      const desiredShift = clampInt(overlap, 0, maxShift);
+
+      setPageShiftX((prev) => {
+        if (Math.abs(prev - desiredShift) < 1) return prev;
+        pageShiftXRef.current = desiredShift;
+        return desiredShift;
+      });
+
+      const top = Math.max(12, Math.round(Number(heroRect?.top || 12)));
+      const maxVisibleHeight = Math.max(240, Math.round(window.innerHeight - top - 12));
+      setDesktopChatDockMetrics((prev) => {
+        if (Math.abs(prev.top - top) < 1 && Math.abs(prev.height - maxVisibleHeight) < 1) return prev;
+        chatDockMetricsRef.current = { top, height: maxVisibleHeight };
+        return { top, height: maxVisibleHeight };
+      });
+    };
+
+    updateDockLayout();
+    window.addEventListener("resize", updateDockLayout);
+    window.addEventListener("scroll", updateDockLayout, { passive: true });
+    return () => {
+      window.removeEventListener("resize", updateDockLayout);
+      window.removeEventListener("scroll", updateDockLayout);
+    };
+  }, [rightDockOpen, viewportWidth, activeTab, detail, selectedPoiDetailTarget, poiDetailPanelOpen]);
 
   const fetchDetail = async ({ showPageLoading = true } = {}) => {
     try {
@@ -437,9 +606,6 @@ export default function TripDetailPage() {
   const isSmartPlanGenerating = smartPlanProgress?.status === "generating";
   const smartPlanErrorMessage = smartPlanProgress?.status === "error" ? String(smartPlanProgress.message || "") : "";
   const smartPlanStatusMessage = String(smartPlanProgress?.message || "").trim();
-  const isDesktopPoiDetailLayout = viewportWidth >= 960;
-  const isMobileLayout = viewportWidth <= 640;
-  const isVeryNarrowMobile = viewportWidth <= 420;
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -1857,6 +2023,17 @@ export default function TripDetailPage() {
     setTripDatesError("");
   };
 
+  const openTripAiChatModal = () => {
+    setPoiDetailPanelOpen(false);
+    setForceCompactChatModal(false);
+    setTripAiChatModalOpen(true);
+  };
+
+  const closeTripAiChatModal = () => {
+    setTripAiChatModalOpen(false);
+    setForceCompactChatModal(false);
+  };
+
   const saveTripDates = async () => {
     if (!trip?.trip_id || savingTripDates) return;
     const startDate = String(tripDateDraft.start_date || "").trim();
@@ -2202,10 +2379,26 @@ export default function TripDetailPage() {
 
   return (
     <>
-      <div style={pageShellStyle}>
+      <div
+        ref={pageShellRef}
+        style={{
+          ...pageShellStyle,
+          ...(isDesktopRightDock
+            ? {
+                width: "100%",
+                maxWidth: `calc(100vw - ${desktopRightReserve}px)`,
+                alignSelf: "flex-start",
+              }
+            : null),
+          transform: isDesktopRightDock ? `translateX(-${Math.round(pageShiftX)}px)` : "translateX(0)",
+          transition: "transform 0.18s ease",
+          willChange: "transform",
+        }}
+      >
         <TripDetailHeroMap
           navigate={navigate}
           mapContainerRef={mapContainerRef}
+          sectionRef={heroSectionRef}
           mapLoading={mapLoading}
           mapError={mapError}
           mapPoints={mapPoints}
@@ -2618,10 +2811,10 @@ export default function TripDetailPage() {
         </section>
       </div>
       <TripDetailFloatingActions
-        isMobileLayout={isMobileLayout}
-        floatingRouteCtaRight={floatingRouteCtaRight}
-        navigate={navigate}
-        tripId={tripId}
+          isMobileLayout={isMobileLayout}
+          floatingRouteCtaRight={floatingRouteCtaRight}
+          openAiChatModal={openTripAiChatModal}
+          hideAiButton={tripAiChatModalOpen}
         setRouteEditError={setRouteEditError}
         setDraggingDayPoi={setDraggingDayPoi}
         setRouteEditMode={setRouteEditMode}
@@ -2631,10 +2824,75 @@ export default function TripDetailPage() {
         routeEditBusy={routeEditBusy}
         routeEditMode={routeEditMode}
       />
+      {tripAiChatModalOpen ? (
+        <TripAiChatPage
+          tripId={tripId}
+          embedded={true}
+          onClose={closeTripAiChatModal}
+          wrapperStyle={
+            isDesktopRightDock && rightDockOwner === "chat"
+              ? {
+                  position: "fixed",
+                  top: desktopChatDockMetrics.top,
+                  bottom: 0,
+                  right: CHAT_DOCK_RIGHT_OFFSET,
+                  width: chatDockWidth,
+                  overflow: "hidden",
+                  zIndex: 70,
+                }
+              : {
+                  position: "fixed",
+                  left: 10,
+                  right: 10,
+                  bottom: 0,
+                  height: "86vh",
+                  maxHeight: "86vh",
+                  overflow: "hidden",
+                  zIndex: 80,
+                }
+          }
+          onApplied={(nextDetail) => {
+            if (nextDetail) setDetail(nextDetail);
+          }}
+        />
+      ) : null}
       <PoiDetailPanel
         key={poiDetailRequestKey || String(selectedPoiDetailTarget?.poi?.poi_id || "poi-detail")}
         open={poiDetailPanelOpen}
         isDesktop={isDesktopPoiDetailLayout}
+        desktopRightOffset={
+          tripAiChatModalOpen && isPoiDockOpen && isDesktopPoiDetailLayout && !forceCompactChatModal
+            ? Math.max(0, Math.round(chatDockWidth + CHAT_DOCK_RIGHT_OFFSET))
+            : undefined
+        }
+        desktopTopOffset={
+          tripAiChatModalOpen && isPoiDockOpen && isDesktopPoiDetailLayout && !forceCompactChatModal
+            ? Math.round(desktopChatDockMetrics.top + 8)
+            : undefined
+        }
+        desktopBottomOffset={
+          tripAiChatModalOpen && isPoiDockOpen && isDesktopPoiDetailLayout && !forceCompactChatModal ? 0 : undefined
+        }
+        wrapperStyle={
+          isDesktopRightDock && rightDockOwner === "poi" && !tripAiChatModalOpen
+            ? {
+                position: "fixed",
+                top: desktopChatDockMetrics.top,
+                right: CHAT_DOCK_RIGHT_OFFSET,
+                width: chatDockWidth,
+                height: desktopChatDockMetrics.height,
+                zIndex: 70,
+              }
+            : null
+        }
+        desktopPlacement={
+          (tripAiChatModalOpen && isPoiDockOpen && isDesktopPoiDetailLayout && !forceCompactChatModal)
+            ? "right"
+            : (isDesktopRightDock && rightDockOwner === "chat") ||
+          (forceCompactChatModal && rightDockOwner === "poi" && isDesktopPoiDetailLayout)
+            ? "modal"
+            : "right"
+        }
         target={selectedPoiDetailTarget}
         loading={poiDetailLoading}
         error={poiDetailError}
