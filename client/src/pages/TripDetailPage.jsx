@@ -194,15 +194,50 @@ export default function TripDetailPage() {
   const desktopRightReserve = isDesktopRightDock ? chatDockWidth + CHAT_DOCK_RIGHT_OFFSET + CHAT_DOCK_MIN_GAP : 0;
 
   const poiCardElsRef = useRef({});
+  const touchDropTargetRef = useRef({ key: null, el: null });
   const touchReorderRef = useRef({
     active: false,
     pointerId: null,
     dayId: null,
     dayPoiId: null,
     originalOrder: null,
-    order: null,
+    overDayPoiId: null,
   });
   const [touchReordering, setTouchReordering] = useState(false);
+
+  const clearTouchDropTarget = () => {
+    const prev = touchDropTargetRef.current;
+    if (prev?.el) {
+      try {
+        prev.el.style.outline = "";
+        prev.el.style.outlineOffset = "";
+      } catch (err) {
+        void err;
+      }
+    }
+    touchDropTargetRef.current = { key: null, el: null };
+  };
+
+  const setTouchDropTarget = (dayId, dayPoiId) => {
+    const key = dayId && dayPoiId ? `${String(dayId)}|${String(dayPoiId)}` : null;
+    if (!key) {
+      clearTouchDropTarget();
+      return;
+    }
+    if (touchDropTargetRef.current.key === key) return;
+
+    clearTouchDropTarget();
+    const el = poiCardElsRef.current[key];
+    if (!el) return;
+
+    try {
+      el.style.outline = "2px solid rgba(37, 99, 235, 0.7)";
+      el.style.outlineOffset = "2px";
+      touchDropTargetRef.current = { key, el };
+    } catch (err) {
+      void err;
+    }
+  };
 
   const mapContainerRef = useRef(null);
   const heroSectionRef = useRef(null);
@@ -221,101 +256,49 @@ export default function TripDetailPage() {
   const destinationCoverLookupInFlightRef = useRef(false);
   const poiDetailRequestSeqRef = useRef(0);
 
-  const applyDayPoiOrderLocal = (dayId, orderedDayPoiIds) => {
-    setDetail((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        days: (prev.days || []).map((d) => {
-          if (String(d.day_id) !== String(dayId)) return d;
-          const current = [...(d.pois || [])];
-          const byId = new Map(current.map((p) => [p.day_poi_id, p]));
-          const reordered = orderedDayPoiIds.map((id) => byId.get(id)).filter(Boolean);
-          return {
-            ...d,
-            pois: reordered.map((p, idx) => ({ ...p, visit_order: idx + 1 })),
-          };
-        }),
-      };
-    });
-  };
-
-  const commitDayPoiReorder = async (day, orderedDayPoiIds) => {
-    if (!day?.day_id || routeEditBusy) return;
-    const realDayId = day.day_id;
-    if (String(realDayId).startsWith("virtual-")) return;
-
-    try {
-      setRouteEditBusy(true);
-      setRouteEditError("");
-      await reorderDayPois(realDayId, orderedDayPoiIds);
-      await fetchDetail({ showPageLoading: false });
-    } catch (err) {
-      if (axios.isAxiosError(err)) {
-        const status = err.response?.status;
-        const message = err.response?.data?.error;
-        if (status === 404) {
-          setRouteEditError(message || "Reorder endpoint not found. Please restart the server.");
-        } else {
-          setRouteEditError(message || "Failed to reorder route");
-        }
-      } else {
-        setRouteEditError("Failed to reorder route");
-      }
-      await fetchDetail({ showPageLoading: false });
-    } finally {
-      setRouteEditBusy(false);
-      setDraggingDayPoi(null);
-      setTouchReordering(false);
-      touchReorderRef.current = {
-        active: false,
-        pointerId: null,
-        dayId: null,
-        dayPoiId: null,
-        originalOrder: null,
-        order: null,
-      };
-    }
-  };
-
   useEffect(() => {
     if (!touchReordering) return;
 
-    const onMove = (ev) => {
-      const st = touchReorderRef.current;
-      if (!st.active || st.pointerId == null) return;
-      if (ev.pointerId !== st.pointerId) return;
-
-      ev.preventDefault();
-
-      const currentOrder = st.order || [];
+    const computeTouchOver = (clientY, st) => {
+      const domOrder = st.originalOrder || [];
       const draggingId = st.dayPoiId;
       const dayId = st.dayId;
-      if (!draggingId || !dayId || !currentOrder.length) return;
+      if (!draggingId || !dayId || !domOrder.length) return null;
 
-      let targetIndex = currentOrder.length - 1;
-      for (let i = 0; i < currentOrder.length; i += 1) {
-        const id = currentOrder[i];
+      let targetIndex = domOrder.length;
+      for (let i = 0; i < domOrder.length; i += 1) {
+        const id = domOrder[i];
         const el = poiCardElsRef.current[`${dayId}|${id}`];
         if (!el) continue;
         const rect = el.getBoundingClientRect();
         const midY = rect.top + rect.height / 2;
-        if (ev.clientY < midY) {
+        if (clientY < midY) {
           targetIndex = i;
           break;
         }
       }
 
-      const fromIndex = currentOrder.findIndex((id) => id === draggingId);
-      if (fromIndex < 0) return;
-      if (targetIndex === fromIndex) return;
+      const highlightIndex = Math.min(domOrder.length - 1, Math.max(0, targetIndex));
+      let overDayPoiId = domOrder[highlightIndex] ?? null;
+      if (overDayPoiId === draggingId) {
+        overDayPoiId =
+          domOrder[Math.min(domOrder.length - 1, highlightIndex + 1)] ?? domOrder[Math.max(0, highlightIndex - 1)] ?? null;
+      }
 
-      const nextOrder = [...currentOrder];
-      nextOrder.splice(fromIndex, 1);
-      nextOrder.splice(targetIndex, 0, draggingId);
+      return overDayPoiId;
+    };
 
-      st.order = nextOrder;
-      applyDayPoiOrderLocal(dayId, nextOrder);
+    const onMove = (ev) => {
+      const st = touchReorderRef.current;
+      if (!st.active || st.pointerId == null) return;
+      if (ev.pointerId !== st.pointerId) return;
+      if (routeEditBusy) return;
+
+      ev.preventDefault();
+
+      const overDayPoiId = computeTouchOver(ev.clientY, st);
+      st.overDayPoiId = overDayPoiId;
+      if (overDayPoiId) setTouchDropTarget(st.dayId, overDayPoiId);
     };
 
     const onEnd = (ev) => {
@@ -323,38 +306,34 @@ export default function TripDetailPage() {
       if (!st.active) return;
       if (st.pointerId != null && ev.pointerId !== st.pointerId) return;
 
-      const { dayId, order, originalOrder } = st;
-      if (!dayId || !order || !originalOrder) {
-        setTouchReordering(false);
-        setDraggingDayPoi(null);
-        return;
-      }
+      clearTouchDropTarget();
 
-      const changed =
-        order.length !== originalOrder.length || order.some((id, idx) => id !== originalOrder[idx]);
+      const overDayPoiId = computeTouchOver(ev.clientY, st) || st.overDayPoiId;
+      const dayId = st.dayId;
+      const fromDayPoiId = st.dayPoiId;
 
-      if (!changed) {
-        setTouchReordering(false);
+      setTouchReordering(false);
+      touchReorderRef.current = {
+        active: false,
+        pointerId: null,
+        dayId: null,
+        dayPoiId: null,
+        originalOrder: null,
+        overDayPoiId: null,
+      };
+
+      if (!dayId || !fromDayPoiId || !overDayPoiId || fromDayPoiId === overDayPoiId) {
         setDraggingDayPoi(null);
-        touchReorderRef.current = {
-          active: false,
-          pointerId: null,
-          dayId: null,
-          dayPoiId: null,
-          originalOrder: null,
-          order: null,
-        };
         return;
       }
 
       const day = (detail?.days || []).find((d) => String(d.day_id) === String(dayId));
       if (!day) {
-        setTouchReordering(false);
         setDraggingDayPoi(null);
         return;
       }
 
-      void commitDayPoiReorder(day, order);
+      void movePoiByDrag({ day, fromDayPoiId, toDayPoiId: overDayPoiId });
     };
 
     window.addEventListener("pointermove", onMove, { passive: false });
@@ -364,6 +343,7 @@ export default function TripDetailPage() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onEnd);
       window.removeEventListener("pointercancel", onEnd);
+      clearTouchDropTarget();
     };
   }, [touchReordering, detail, routeEditBusy]);
   const poiDetailHiResImageLookupRef = useRef(new Set());
@@ -2937,7 +2917,7 @@ export default function TripDetailPage() {
                                     dayId: String(day.day_id),
                                     dayPoiId: poi.day_poi_id,
                                     originalOrder: [...dayPoiIds],
-                                    order: [...dayPoiIds],
+                                    overDayPoiId: null,
                                   };
                                   setDraggingDayPoi({ dayId: String(day.day_id), dayPoiId: poi.day_poi_id });
                                   setTouchReordering(true);
