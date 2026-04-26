@@ -955,6 +955,50 @@ export default function TripDetailPage() {
     };
   }, [activeTab, visibleDays, poiImageUrls, mapReadyVersion, trip?.destination]);
 
+  // First-load warm-up: proactively refresh POI images for first few days without waiting for error
+  const poiFirstLoadWarmupRef = useRef(false);
+  useEffect(() => {
+    if (!detail?.days?.length || poiFirstLoadWarmupRef.current) return;
+
+    let cancelled = false;
+    poiFirstLoadWarmupRef.current = true;
+
+    const run = async () => {
+      // Only warm-up first 2-3 days to avoid excessive API calls
+      const daysToWarmup = (detail.days || []).slice(0, 3);
+      const pois = daysToWarmup.flatMap((day) => day?.pois || []).filter((poi) => poi?.name);
+      if (!pois.length) return;
+
+      const service = await ensurePlacesServiceForHealing();
+      if (!service) return;
+
+      for (const poi of pois) {
+        if (cancelled) break;
+
+        const cacheKey = getPoiImageCacheKey(poi);
+        const currentUrl = String(poiImageUrls[cacheKey] || poi?.image_url || "").trim();
+
+        // Skip if already has a fresh, non-legacy image cached
+        const isLegacy = isLegacyGooglePlacesPhotoUrl(currentUrl);
+        const isCached = poiImageUrls[cacheKey]; // explicitly cached, likely fresh
+
+        if (currentUrl && !isLegacy && isCached) {
+          // Already has good cached image
+          continue;
+        }
+
+        // Preemptively heal: no-wait, silent background refresh
+        void healPoiThumbImage(poi, currentUrl);
+        await new Promise((r) => setTimeout(r, 150)); // throttle API calls
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.days?.length]);
+
   useEffect(() => {
     const serverCover = String(trip?.cover_image_url || "").trim();
     if (!serverCover) return;

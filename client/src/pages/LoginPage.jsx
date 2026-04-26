@@ -80,6 +80,14 @@ export default function LoginPage() {
         <button className="primaryBtn" type="submit" disabled={loading}>
           {loading ? "Logging in..." : "Login"}
         </button>
+
+        <div className="authHint centered">
+          Forgot your password?
+          {" "}
+          <button className="textLink inlineTextLink" type="button" onClick={() => navigate("/forgot-password")}>
+            Reset now
+          </button>
+        </div>
       </form>
 
       <div className="authHint centered" style={{ marginTop: 14 }}>

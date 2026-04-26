@@ -750,6 +750,16 @@ body.nearby-poi-detail-open .bottomNav {
   font-weight: 700;
 }
 
+.successText {
+  color: #166534;
+  background: rgba(22, 101, 52, 0.08);
+  border: 1px solid rgba(22, 101, 52, 0.2);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .profileAuthCta {
   margin-top: 20px;
   display: flex;

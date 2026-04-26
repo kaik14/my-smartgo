@@ -578,7 +578,7 @@ export default function ProfilePage() {
           setFavoritePoiIntroExpanded(false);
         }}
         canFavorite={Boolean(user?.user_id)}
-        enableStreetView={false}
+        enableStreetView={true}
         isFavorite={favorites.some((item) => Number(item?.poi_id) === Number(selectedFavoritePoi?.poi?.poi_id))}
         favoriteBusy={favoriteBusyPoiId === Number(selectedFavoritePoi?.poi?.poi_id)}
         onToggleFavorite={() => void handleToggleFavoriteFromProfileDetail()}

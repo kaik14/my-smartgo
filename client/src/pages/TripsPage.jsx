@@ -91,6 +91,34 @@ function getPlacePhotoUrl(place, maxWidth = 1200) {
   }
 }
 
+function isLegacyGooglePlacesPhotoUrl(url) {
+  const text = String(url || "").trim().toLowerCase();
+  if (!text) return false;
+  return text.includes("maps.googleapis.com/maps/api/place/photo") && text.includes("photoreference=");
+}
+
+function getCoverRefreshCacheKey(tripId) {
+  return `smartgo_trip_cover_refresh_ts_${tripId}`;
+}
+
+function getLastCoverRefreshTime(tripId) {
+  if (!tripId) return 0;
+  try {
+    return Number(localStorage.getItem(getCoverRefreshCacheKey(tripId)) || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function recordCoverRefreshTime(tripId) {
+  if (!tripId) return;
+  try {
+    localStorage.setItem(getCoverRefreshCacheKey(tripId), String(Date.now()));
+  } catch {
+    // ignore localStorage errors
+  }
+}
+
 export default function TripsPage() {
   const navigate = useNavigate();
   const [trips, setTrips] = useState([]);
@@ -114,7 +142,7 @@ export default function TripsPage() {
     return placesServiceRef.current;
   };
 
-  const handleTripCoverError = async (trip) => {
+  const refreshTripCoverImage = async (trip, reason = "manual") => {
     const tripId = Number(trip?.trip_id);
     if (!Number.isInteger(tripId) || tripId <= 0) return;
     if (coverRefreshInFlightRef.current.has(tripId)) return;
@@ -160,6 +188,7 @@ export default function TripsPage() {
         ))
       ));
       writeTripCoverImageCache(tripId, photoUrl);
+      recordCoverRefreshTime(tripId);
 
       try {
         await patchTrip(tripId, { cover_image_url: photoUrl });
@@ -173,6 +202,10 @@ export default function TripsPage() {
     }
   };
 
+  const handleTripCoverError = async (trip) => {
+    await refreshTripCoverImage(trip, "error");
+  };
+
   useEffect(() => {
     (async () => {
       const data = await getTrips();
@@ -180,6 +213,31 @@ export default function TripsPage() {
       setLoading(false);
     })();
   }, []);
+
+  // Auto-warm cover images on first load: check and refresh if legacy Google URL or too old
+  useEffect(() => {
+    if (loading || trips.length === 0) return;
+
+    const REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const needsRefresh = trips.filter((trip) => {
+      const current = String(trip?.cover_image_url || "").trim();
+      // If no cover at all, or it's a legacy Google photo URL, or not refreshed in 7 days: needs refresh
+      if (!current) return true;
+      if (isLegacyGooglePlacesPhotoUrl(current)) return true;
+      const lastRefresh = getLastCoverRefreshTime(trip.trip_id);
+      if (lastRefresh && Date.now() - lastRefresh < REFRESH_INTERVAL_MS) return false;
+      return true;
+    });
+
+    // Silently refresh in background; don't block UI
+    (async () => {
+      for (const trip of needsRefresh) {
+        await refreshTripCoverImage(trip, "auto-warm");
+        // Small delay to avoid hammering the API
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    })();
+  }, [loading, trips]);
 
   return (
     <div>

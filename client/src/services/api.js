@@ -233,3 +233,13 @@ export const login = async (payload) => {
   const res = await api.post("/auth/login", payload);
   return res.data;
 };
+
+export const forgotPassword = async (payload) => {
+  const res = await api.post("/auth/forgot-password", payload);
+  return res.data;
+};
+
+export const resetPassword = async (payload) => {
+  const res = await api.post("/auth/reset-password", payload);
+  return res.data;
+};
