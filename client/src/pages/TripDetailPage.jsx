@@ -346,6 +346,33 @@ export default function TripDetailPage() {
       clearTouchDropTarget();
     };
   }, [touchReordering, detail, routeEditBusy]);
+
+  const beginTouchPoiReorder = (e, day, poi) => {
+    if (!routeEditMode || routeEditBusy || !poi?.day_poi_id) return;
+    if (!day?.day_id || String(day.day_id).startsWith("virtual-")) return;
+    if (e.pointerType === "mouse") return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const dayPoiIds = (day.pois || []).map((p) => p.day_poi_id).filter((id) => id != null);
+    touchReorderRef.current = {
+      active: true,
+      pointerId: e.pointerId,
+      dayId: String(day.day_id),
+      dayPoiId: poi.day_poi_id,
+      originalOrder: [...dayPoiIds],
+      overDayPoiId: null,
+    };
+    setDraggingDayPoi({ dayId: String(day.day_id), dayPoiId: poi.day_poi_id });
+    setTouchReordering(true);
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {
+      void err;
+    }
+  };
   const poiDetailHiResImageLookupRef = useRef(new Set());
   const recommendedSearchCacheRef = useRef(new Map());
   const recommendedIdleListenerRef = useRef(null);
@@ -2865,8 +2892,21 @@ export default function TripDetailPage() {
                                       borderRadius: 10,
                                     }
                                   : null),
+                                ...(routeEditMode
+                                  ? {
+                                      cursor: "grab",
+                                      userSelect: "none",
+                                      WebkitUserSelect: "none",
+                                      touchAction: "none",
+                                    }
+                                  : null),
                               }}
                               aria-hidden="true"
+                              onPointerDown={(e) => beginTouchPoiReorder(e, day, poi)}
+                              onContextMenu={(e) => {
+                                if (!routeEditMode) return;
+                                e.preventDefault();
+                              }}
                             >
                               {poiThumbUrl ? (
                                 <img
@@ -2875,6 +2915,15 @@ export default function TripDetailPage() {
                                   style={poiThumbImgStyle}
                                   loading="lazy"
                                   referrerPolicy="no-referrer"
+                                  draggable={false}
+                                  onDragStart={(e) => {
+                                    if (!routeEditMode) return;
+                                    e.preventDefault();
+                                  }}
+                                  onContextMenu={(e) => {
+                                    if (!routeEditMode) return;
+                                    e.preventDefault();
+                                  }}
                                   onLoad={(e) => {
                                     e.currentTarget.style.opacity = "1";
                                   }}
@@ -2899,34 +2948,10 @@ export default function TripDetailPage() {
                                 }}
                                 aria-hidden="true"
                                 title="Drag to reorder"
-                                onPointerDown={(e) => {
-                                  if (!routeEditMode || routeEditBusy || !poi?.day_poi_id) return;
-                                  if (!day?.day_id || String(day.day_id).startsWith("virtual-")) return;
-                                  if (e.pointerType === "mouse") return;
-
+                                onPointerDown={(e) => beginTouchPoiReorder(e, day, poi)}
+                                onContextMenu={(e) => {
+                                  if (!routeEditMode) return;
                                   e.preventDefault();
-                                  e.stopPropagation();
-
-                                  const dayPoiIds = (day.pois || [])
-                                    .map((p) => p.day_poi_id)
-                                    .filter((id) => id != null);
-
-                                  touchReorderRef.current = {
-                                    active: true,
-                                    pointerId: e.pointerId,
-                                    dayId: String(day.day_id),
-                                    dayPoiId: poi.day_poi_id,
-                                    originalOrder: [...dayPoiIds],
-                                    overDayPoiId: null,
-                                  };
-                                  setDraggingDayPoi({ dayId: String(day.day_id), dayPoiId: poi.day_poi_id });
-                                  setTouchReordering(true);
-
-                                  try {
-                                    e.currentTarget.setPointerCapture(e.pointerId);
-                                  } catch (err) {
-                                    void err;
-                                  }
                                 }}
                               >
                                 {"\u22EE\u22EE"}
