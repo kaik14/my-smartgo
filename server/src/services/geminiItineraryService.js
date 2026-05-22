@@ -3,9 +3,9 @@ import { getTripWeatherSummary, getWeatherLineForDate } from "./openMeteoWeather
 
 // 推荐的 2026 年最新稳定标识符
 const FALLBACK_GEMINI_MODELS = [
-  "gemini-3.1-flash",       // 目前最推荐的 3.1 版本
-  "gemini-3-flash-preview", // 3.0 系列的预览版 ID
-  "gemini-2.5-flash"        // 最后的保底（注意：此模型将于 2026年6月下架）
+  "gemini-3.1-flash-lite",       // 目前最推荐的 3.1 版本
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
 ];
 const GEMINI_RETRY_DELAYS_MS = [1000, 2500, 5000];
 
