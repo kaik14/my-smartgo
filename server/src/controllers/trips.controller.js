@@ -47,20 +47,408 @@ function normalizeTripPreferences(input) {
   return null;
 }
 
-async function backfillMissingTripPoiCoordinates(rows, destination, tripId) {
+function normalizeTripDestinations(input, fallbackDestination) {
+  const values = [];
+  const addValue = (value) => {
+    const rawCity =
+      value && typeof value === "object"
+        ? value.city ?? value.label ?? value.name
+        : value;
+    const city = String(rawCity || "").trim().replace(/\s+/g, " ");
+    if (!city) return;
+    if (!values.some((item) => item.city.toLowerCase() === city.toLowerCase())) {
+      values.push({
+        city,
+        start_date: String(value?.start_date || value?.startDate || "").slice(0, 10),
+        end_date: String(value?.end_date || value?.endDate || "").slice(0, 10),
+      });
+    }
+  };
+
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      addValue(item);
+    }
+  } else if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (trimmed) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return normalizeTripDestinations(parsed, fallbackDestination);
+        }
+      } catch {
+        // fall back to separator parsing below
+      }
+
+      trimmed
+        .split(/\s*(?:\/|\||;|\n|->)\s*/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .forEach(addValue);
+    }
+  }
+
+  if (values.length === 0) addValue(fallbackDestination);
+  return values;
+}
+
+function getSimpleCityName(destination) {
+  const value = String(destination || "").trim();
+  const parenthetical = value.match(/^(.+?)\s*\((.+?)\)\s*$/);
+  if (parenthetical?.[2]) return parenthetical[2].trim();
+  return value.split(",")[0].trim() || value;
+}
+
+function destinationHasAny(destination, keywords) {
+  const value = String(destination || "").toLowerCase();
+  return keywords.some((keyword) => value.includes(keyword));
+}
+
+function buildTransportRecommendation(from, to) {
+  const fromName = getSimpleCityName(from);
+  const toName = getSimpleCityName(to);
+  const routeText = `${fromName} -> ${toName}`;
+  const fromLower = String(from || "").toLowerCase();
+  const toLower = String(to || "").toLowerCase();
+
+  const isLangkawiRoute = destinationHasAny(from, ["langkawi"]) || destinationHasAny(to, ["langkawi"]);
+  const isEastMalaysiaRoute =
+    destinationHasAny(from, ["kota kinabalu", "sabah", "kuching", "miri", "sibu", "bintulu", "sarawak", "labuan"]) ||
+    destinationHasAny(to, ["kota kinabalu", "sabah", "kuching", "miri", "sibu", "bintulu", "sarawak", "labuan"]);
+  const isPenangLangkawiRoute =
+    isLangkawiRoute &&
+    (destinationHasAny(from, ["penang", "george town", "butterworth"]) ||
+      destinationHasAny(to, ["penang", "george town", "butterworth"]));
+  const isKlMelakaRoute =
+    ((destinationHasAny(from, ["kuala lumpur"]) && destinationHasAny(to, ["melaka", "malacca"])) ||
+      (destinationHasAny(to, ["kuala lumpur"]) && destinationHasAny(from, ["melaka", "malacca"])));
+  const isKlJohorRoute =
+    ((destinationHasAny(from, ["kuala lumpur"]) && destinationHasAny(to, ["johor bahru"])) ||
+      (destinationHasAny(to, ["kuala lumpur"]) && destinationHasAny(from, ["johor bahru"])));
+
+  if (isPenangLangkawiRoute) {
+    return `${routeText}: Recommended ferry or short flight; ferry is scenic, while flying is usually easier with luggage.`;
+  }
+
+  if (isLangkawiRoute || isEastMalaysiaRoute) {
+    return `${routeText}: Recommended flight; it saves the most time compared with long land and ferry transfers.`;
+  }
+
+  if (isKlMelakaRoute) {
+    return `${routeText}: Recommended express bus or private car; both are straightforward for this short intercity hop.`;
+  }
+
+  if (isKlJohorRoute) {
+    return `${routeText}: Recommended flight for speed, or express bus if you prefer a lower-cost option.`;
+  }
+
+  if (
+    fromLower.includes("cameron highlands") ||
+    toLower.includes("cameron highlands") ||
+    fromLower.includes("kundasang") ||
+    toLower.includes("kundasang")
+  ) {
+    return `${routeText}: Recommended private car or hired driver because mountain routes are easier with door-to-door transport.`;
+  }
+
+  return `${routeText}: Recommended express bus or train where available; choose flight only if the route is long or time is tight.`;
+}
+
+function buildIntercityTransportNote(destinations) {
+  if (!Array.isArray(destinations) || destinations.length < 2) return "";
+
+  const lines = [];
+  for (let index = 0; index < destinations.length - 1; index += 1) {
+    lines.push(`- ${buildTransportRecommendation(destinations[index].city, destinations[index + 1].city)}`);
+  }
+
+  return `Intercity travel suggestions:\n${lines.join("\n")}`;
+}
+
+function buildCityStayNote(destinations) {
+  if (!Array.isArray(destinations) || destinations.length === 0) return "";
+
+  const lines = destinations.map((item) => {
+    const dateText = item.start_date && item.end_date
+      ? `${item.start_date} to ${item.end_date}`
+      : "dates not specified";
+    return `- ${item.city}: ${dateText}`;
+  });
+
+  return `City stay dates:\n${lines.join("\n")}`;
+}
+
+function combineTripNoteWithTransportSuggestions(note, destinations) {
+  const parts = [
+    String(note || "").trim(),
+    buildCityStayNote(destinations),
+    buildIntercityTransportNote(destinations),
+  ].filter(Boolean);
+  return parts.length ? parts.join("\n\n") : null;
+}
+
+function getTripRangeFromDestinations(destinations, fallbackStartDate, fallbackEndDate) {
+  const ranges = (Array.isArray(destinations) ? destinations : [])
+    .filter((item) => item?.start_date && item?.end_date)
+    .map((item) => ({ start: item.start_date, end: item.end_date }));
+
+  if (!ranges.length) {
+    return {
+      start_date: fallbackStartDate,
+      end_date: fallbackEndDate,
+    };
+  }
+
+  return {
+    start_date: ranges.reduce((min, item) => (item.start < min ? item.start : min), ranges[0].start),
+    end_date: ranges.reduce((max, item) => (item.end > max ? item.end : max), ranges[0].end),
+  };
+}
+
+function parseCityStayScheduleFromNote(note) {
+  const text = String(note || "");
+  const markerIndex = text.indexOf("City stay dates:");
+  if (markerIndex < 0) return [];
+
+  return text
+    .slice(markerIndex + "City stay dates:".length)
+    .split(/\n\s*\n/)[0]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^-\s*(.+?):\s*(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/);
+      if (!match) return null;
+      return {
+        city: match[1].trim(),
+        startDate: match[2],
+        endDate: match[3],
+      };
+    })
+    .filter(Boolean);
+}
+
+function addDaysToYmd(value, daysToAdd) {
+  const date = new Date(`${String(value || "").slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setDate(date.getDate() + daysToAdd);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getTripDestinationForDay(trip, dayNumber) {
+  const schedule = parseCityStayScheduleFromNote(trip?.note);
+  if (!schedule.length) return String(trip?.destination || "").trim();
+
+  const startDate = toYmd(trip?.start_date);
+  const ymd = addDaysToYmd(startDate, Math.max(0, Number(dayNumber || 1) - 1));
+  if (!ymd) return String(trip?.destination || "").trim();
+
+  const stay = schedule.find((item) => ymd >= item.startDate && ymd <= item.endDate);
+  return stay?.city || String(trip?.destination || "").trim();
+}
+
+function isTransportOnlyPoi(poi) {
+  const text = `${poi?.name || ""} ${poi?.type || ""} ${poi?.address || ""} ${poi?.description || ""}`.toLowerCase();
+  return [
+    "airport",
+    "international airport",
+    "klia",
+    "terminal",
+    "bus station",
+    "bus terminal",
+    "train station",
+    "railway station",
+    "ferry terminal",
+    "jetty",
+    "transfer",
+    "hotel check-in",
+  ].some((keyword) => text.includes(keyword));
+}
+
+function getDestinationCityOptions(destination) {
+  return String(destination || "")
+    .split(/\s*(?:\/|\||;|->)\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function inferPoiCityFromText(row, cityOptions) {
+  const text = `${row?.name || ""} ${row?.address || ""} ${row?.description || ""}`.toLowerCase();
+  let bestCity = "";
+  let bestScore = 0;
+
+  for (const city of cityOptions) {
+    const cityLower = city.toLowerCase();
+    const simpleCity = cityLower.split(",")[0].trim();
+    const parenthetical = cityLower.match(/\(([^)]+)\)/)?.[1]?.trim();
+    const withoutParenthetical = cityLower.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+    const aliases = [
+      cityLower,
+      simpleCity,
+      withoutParenthetical,
+      parenthetical,
+      cityLower.includes("kuala lumpur") ? "kl" : "",
+      cityLower.includes("penang") ? "penang" : "",
+      cityLower.includes("george town") || cityLower.includes("georgetown") ? "george town" : "",
+      cityLower.includes("george town") || cityLower.includes("georgetown") ? "georgetown" : "",
+    ].filter(Boolean);
+    const score = aliases.reduce((sum, alias) => sum + (alias && text.includes(alias) ? 1 : 0), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestCity = city;
+    }
+  }
+
+  return bestScore > 0 ? bestCity : "";
+}
+
+function isCoordinateLikelyForCity(lat, lng, city) {
+  const latNum = Number(lat);
+  const lngNum = Number(lng);
+  if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) return false;
+  const cityText = String(city || "").toLowerCase();
+
+  if (cityText.includes("langkawi")) {
+    return latNum >= 6.0 && latNum <= 6.65 && lngNum >= 99.55 && lngNum <= 100.05;
+  }
+
+  if (cityText.includes("kuala lumpur")) {
+    return latNum >= 2.85 && latNum <= 3.45 && lngNum >= 101.35 && lngNum <= 102.05;
+  }
+
+  if (cityText.includes("penang") || cityText.includes("george town") || cityText.includes("georgetown")) {
+    return latNum >= 5.05 && latNum <= 5.65 && lngNum >= 100.05 && lngNum <= 100.65;
+  }
+
+  return isLikelyMalaysiaCoordinates(latNum, lngNum);
+}
+
+function getFallbackCoordsForPoi(row, city) {
+  const text = `${row?.name || ""} ${row?.address || ""} ${row?.description || ""} ${city || ""}`.toLowerCase();
+  if (text.includes("batu caves")) return { lat: 3.2379, lng: 101.6840 };
+  if (text.includes("jalan alor")) return { lat: 3.1467, lng: 101.7086 };
+  if (text.includes("petronas") || text.includes("suria klcc")) return { lat: 3.1579, lng: 101.7116 };
+  if (text.includes("klcc park")) return { lat: 3.1540, lng: 101.7134 };
+  if (text.includes("thean hou")) return { lat: 3.1217, lng: 101.6870 };
+  if (text.includes("kl tower") || text.includes("menara kuala lumpur")) return { lat: 3.1528, lng: 101.7037 };
+  if (text.includes("pavilion kuala lumpur")) return { lat: 3.1489, lng: 101.7133 };
+  if (text.includes("merdeka square") || text.includes("dataran merdeka")) return { lat: 3.1478, lng: 101.6932 };
+  if (text.includes("central market") || text.includes("pasar seni")) return { lat: 3.1457, lng: 101.6954 };
+  if (text.includes("petaling street")) return { lat: 3.1433, lng: 101.6978 };
+  if (text.includes("george town street art") || text.includes("armenian street")) return { lat: 5.4146, lng: 100.3376 };
+  if (text.includes("khoo kongsi")) return { lat: 5.4133, lng: 100.3370 };
+  if (text.includes("cheong fatt tze") || text.includes("blue mansion")) return { lat: 5.4214, lng: 100.3349 };
+  if (text.includes("pinang peranakan")) return { lat: 5.4174, lng: 100.3407 };
+  if (text.includes("penang peranakan")) return { lat: 5.4174, lng: 100.3407 };
+  if (text.includes("clan jetties") || text.includes("chew jetty")) return { lat: 5.4116, lng: 100.3388 };
+  if (text.includes("gurney plaza")) return { lat: 5.4380, lng: 100.3099 };
+  if (text.includes("gurney drive hawker") || text.includes("gurney drive")) return { lat: 5.4389, lng: 100.3090 };
+  if (text.includes("kek lok si")) return { lat: 5.3984, lng: 100.2730 };
+  if (text.includes("penang hill")) return { lat: 5.4080, lng: 100.2777 };
+  if (text.includes("fort cornwallis")) return { lat: 5.4204, lng: 100.3442 };
+  if (text.includes("underwater world")) return { lat: 6.3027, lng: 99.8492 };
+  if (text.includes("pantai cenang")) return { lat: 6.2937, lng: 99.7297 };
+  if (text.includes("kilim karst")) return { lat: 6.4226, lng: 99.8096 };
+  if (text.includes("langkawi wildlife park")) return { lat: 6.3858, lng: 99.8350 };
+  if (text.includes("telaga tujuh") || text.includes("sky bridge") || text.includes("cable car")) return { lat: 6.3711, lng: 99.6776 };
+  if (text.includes("tanjung rhu")) return { lat: 6.4335, lng: 99.7899 };
+  if (text.includes("kuah") || text.includes("night market at kuah") || text.includes("eagle square")) return { lat: 6.3271, lng: 99.8413 };
+  if (text.includes("datai bay")) return { lat: 6.4512, lng: 99.7269 };
+  if (text.includes("kuala lumpur international airport")) return { lat: 2.7456, lng: 101.7072 };
+  return null;
+}
+
+function getRoundedCoordinateKey(row) {
+  if (!hasValidCoordinates(row?.lat, row?.lng)) return "";
+  return `${Number(row.lat).toFixed(4)},${Number(row.lng).toFixed(4)}`;
+}
+
+function getDistanceMetersBetweenCoords(a, b) {
+  const lat1 = Number(a?.lat);
+  const lng1 = Number(a?.lng);
+  const lat2 = Number(b?.lat);
+  const lng2 = Number(b?.lng);
+  if (![lat1, lng1, lat2, lng2].every(Number.isFinite)) return Infinity;
+  const toRad = (value) => (value * Math.PI) / 180;
+  const earthRadiusMeters = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function getCachedGooglePlaceLocation(row) {
+  if (!row?.google_place_cache_json) return null;
+  try {
+    const parsed = typeof row.google_place_cache_json === "string"
+      ? JSON.parse(row.google_place_cache_json)
+      : row.google_place_cache_json;
+    const lat = Number(parsed?.location?.lat);
+    const lng = Number(parsed?.location?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (!isLikelyMalaysiaCoordinates(lat, lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+function getBestPoiCoordinates(row) {
+  const cachedLocation = getCachedGooglePlaceLocation(row);
+  if (cachedLocation) return cachedLocation;
+
+  const lat = Number(row?.lat);
+  const lng = Number(row?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { lat: null, lng: null };
+  return { lat, lng };
+}
+
+async function backfillMissingTripPoiCoordinates(rows, destination, tripId, trip = null) {
   if (!Array.isArray(rows) || rows.length === 0) return;
 
   const geocodeCache = new Map();
   const updatedPoiIds = new Set();
+  const cityOptions = getDestinationCityOptions(destination);
+  const coordinateKeyCounts = new Map();
+  for (const row of rows) {
+    const key = getRoundedCoordinateKey(row);
+    if (!key || !row?.name) continue;
+    if (!coordinateKeyCounts.has(key)) coordinateKeyCounts.set(key, new Set());
+    coordinateKeyCounts.get(key).add(String(row.name).trim().toLowerCase());
+  }
 
   for (const row of rows) {
     if (row?.poi_id == null) continue;
     if (updatedPoiIds.has(row.poi_id)) continue;
+    const cachedLocation = getCachedGooglePlaceLocation(row);
+    if (cachedLocation) {
+      row.lat = cachedLocation.lat;
+      row.lng = cachedLocation.lng;
+    }
+
     const hasCoords = hasValidCoordinates(row.lat, row.lng);
     const hasValidMalaysiaCoords = hasCoords && isLikelyMalaysiaCoordinates(row.lat, row.lng);
-    if (hasValidMalaysiaCoords) continue;
+    const dayCity = getTripDestinationForDay(trip, row.day_number);
+    const inferredCity = inferPoiCityFromText(row, cityOptions) || dayCity;
+    const hasValidCityCoords = hasCoords && inferredCity
+      ? isCoordinateLikelyForCity(row.lat, row.lng, inferredCity)
+      : hasValidMalaysiaCoords;
+    const duplicateCoordKey = getRoundedCoordinateKey(row);
+    const hasDuplicateCoords =
+      duplicateCoordKey &&
+      coordinateKeyCounts.has(duplicateCoordKey) &&
+      coordinateKeyCounts.get(duplicateCoordKey).size > 1;
+    const fallbackCoords = inferredCity ? getFallbackCoordsForPoi(row, inferredCity) : null;
+    const isFarFromKnownFallback =
+      hasCoords && fallbackCoords && getDistanceMetersBetweenCoords(row, fallbackCoords) > 1500;
 
-    const cacheKey = `${String(row.name || "").trim().toLowerCase()}|${String(row.address || "").trim().toLowerCase()}|${String(destination || "").trim().toLowerCase()}`;
+    if (hasValidCityCoords && !hasDuplicateCoords && !isFarFromKnownFallback) continue;
+
+    const geocodeDestination = inferredCity || destination;
+    const cacheKey = `${String(row.name || "").trim().toLowerCase()}|${String(row.address || "").trim().toLowerCase()}|${String(geocodeDestination || "").trim().toLowerCase()}`;
     let coords = geocodeCache.get(cacheKey);
 
     if (coords === undefined) {
@@ -68,8 +456,11 @@ async function backfillMissingTripPoiCoordinates(rows, destination, tripId) {
         coords = await geocodePoiCoordinates({
           name: row.name,
           address: row.address,
-          destination,
+          destination: geocodeDestination,
         });
+        if (coords && inferredCity && !isCoordinateLikelyForCity(coords.lat, coords.lng, inferredCity)) {
+          coords = null;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error || "Unknown geocode error");
         console.warn(
@@ -78,6 +469,12 @@ async function backfillMissingTripPoiCoordinates(rows, destination, tripId) {
         coords = null;
       }
       geocodeCache.set(cacheKey, coords);
+    }
+
+    if (!coords) {
+      if (fallbackCoords) {
+        coords = fallbackCoords;
+      }
     }
 
     if (!coords) {
@@ -185,9 +582,15 @@ function buildItinerarySummaryText(rows) {
 
 export async function createTrip(req, res) {
   try {
-    const { title, destination, start_date, end_date, preferences, description, note } = req.body;
+    const { title, destination, destinations, start_date, end_date, preferences, description, note } = req.body;
     const userId = getUserId(req);
     const normalizedPreferences = normalizeTripPreferences(preferences);
+    const normalizedDestinations = normalizeTripDestinations(destinations, destination);
+    const destinationText = normalizedDestinations.length
+      ? normalizedDestinations.map((item) => item.city).join(" / ")
+      : String(destination || "").trim() || "Untitled Destination";
+    const tripNote = combineTripNoteWithTransportSuggestions(note, normalizedDestinations);
+    const tripDateRange = getTripRangeFromDestinations(normalizedDestinations, start_date, end_date);
 
     if (!userId) {
       return res.status(400).json({ error: "user_id is required" });
@@ -200,12 +603,12 @@ export async function createTrip(req, res) {
       `,
       [
         title,
-        destination,
-        start_date,
-        end_date,
+        destinationText,
+        tripDateRange.start_date,
+        tripDateRange.end_date,
         normalizedPreferences ? JSON.stringify(normalizedPreferences) : null,
         description ?? null,
-        note ?? null,
+        tripNote,
         userId,
       ]
     );
@@ -248,7 +651,7 @@ const aiDaySchema = z
   .object({
     dayNumber: z.number().int().positive(),
     summary: z.string().min(1),
-    pois: z.array(aiPoiSchema).min(3).max(6),
+    pois: z.array(aiPoiSchema).min(4).max(5),
   })
   .strict();
 
@@ -259,6 +662,8 @@ const aiItinerarySchema = z
     days: z.array(aiDaySchema).min(1),
   })
   .strict();
+
+const AI_ITINERARY_FORMAT_ATTEMPTS = 2;
 
 function toYmd(value) {
   if (!value) return null;
@@ -304,6 +709,111 @@ function validateGeneratedItineraryAgainstTrip(itinerary, trip) {
       throw new Error(`AI itinerary dayNumber must be continuous (expected ${expectedDayNumber})`);
     }
   }
+}
+
+function removeTransportOnlyPoisFromDay(day) {
+  return {
+    ...day,
+    pois: (day.pois || []).filter((poi) => !isTransportOnlyPoi(poi)),
+  };
+}
+
+function assertGeneratedDayHasEnoughPois(day) {
+  if ((day?.pois || []).length >= 4) return;
+  throw new Error(`AI generated fewer than 4 usable POIs for Day ${day?.dayNumber || "?"} after removing transport-only stops`);
+}
+
+function assertGeneratedItineraryHasPoiCountVariety(itinerary) {
+  const days = Array.isArray(itinerary?.days) ? itinerary.days : [];
+  if (days.length < 2) return;
+
+  const counts = days.map((day) => (day?.pois || []).length);
+  if (counts.some((count) => count < 4 || count > 5)) {
+    throw new Error("AI generated a day with an unsupported POI count; each day must have 4 or 5 POIs");
+  }
+  if (counts.includes(4) && counts.includes(5)) return;
+
+  throw new Error("AI generated the same POI count for every day; use a mix of 4-POI and 5-POI days");
+}
+
+function isAiItineraryFormatError(error) {
+  if (error instanceof z.ZodError) return true;
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    message.includes("non-json") ||
+    message.includes("empty response") ||
+    message.includes("invalid itinerary") ||
+    message.includes("day count") ||
+    message.includes("daynumber") ||
+    message.includes("fewer than 4 usable pois") ||
+    message.includes("poi count")
+  );
+}
+
+function formatAiItineraryIssues(error) {
+  if (error instanceof z.ZodError) {
+    return error.issues
+      .slice(0, 8)
+      .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+      .join("; ");
+  }
+  return String(error?.message || "Unknown format error");
+}
+
+async function generateValidatedAiItinerary({
+  trip,
+  preferences,
+  transientNote,
+  onRetry,
+}) {
+  let lastFormatError = null;
+
+  for (let attempt = 1; attempt <= AI_ITINERARY_FORMAT_ATTEMPTS; attempt += 1) {
+    const retryInstruction = lastFormatError
+      ? [
+          "[Automatic format retry]",
+          "The previous response could not be saved because it did not match the required itinerary JSON schema.",
+          `Validation issue: ${formatAiItineraryIssues(lastFormatError)}`,
+          "Return ONLY one valid JSON object matching the requested schema. Do not include markdown or explanatory text.",
+          "Ensure every day has dayNumber, summary, and 4 or 5 POIs. For trips with 2+ days, use a mix of 4-POI and 5-POI days. Ensure every POI has name, type, address, description, startTime, durationMin, and note.",
+        ].join("\n")
+      : "";
+
+    try {
+      const itineraryRaw = await generateItinerary({
+        destination: trip.destination,
+        startDate: toYmd(trip.start_date),
+        endDate: toYmd(trip.end_date),
+        preferences,
+        description: trip.description ?? "",
+        note: [transientNote, retryInstruction].filter(Boolean).join("\n\n"),
+      });
+
+      const validated = aiItinerarySchema.parse(itineraryRaw);
+      validated.days = validated.days.map(removeTransportOnlyPoisFromDay);
+      validated.days.forEach(assertGeneratedDayHasEnoughPois);
+      assertGeneratedItineraryHasPoiCountVariety(validated);
+      validateGeneratedItineraryAgainstTrip(validated, trip);
+      return validated;
+    } catch (error) {
+      if (!isAiItineraryFormatError(error)) throw error;
+      lastFormatError = error;
+      if (attempt >= AI_ITINERARY_FORMAT_ATTEMPTS) break;
+
+      console.warn(
+        `[AI itinerary retry] tripId=${trip?.trip_id || "unknown"} attempt=${attempt} reason=${formatAiItineraryIssues(error)}`
+      );
+      if (typeof onRetry === "function") {
+        onRetry({
+          attempt: attempt + 1,
+          maxAttempts: AI_ITINERARY_FORMAT_ATTEMPTS,
+          reason: formatAiItineraryIssues(error),
+        });
+      }
+    }
+  }
+
+  throw lastFormatError || new Error("AI returned invalid itinerary JSON format");
 }
 
 async function upsertAiPoiForDay(connection, { tripId, destination, dayNumber, dayId, poi, visitOrder }) {
@@ -647,17 +1157,11 @@ export async function generateAiTripItinerary(req, res) {
       ? [String(trip.note || "").trim(), `[AI Chat Request]\n${userRequest}`].filter(Boolean).join("\n\n")
       : (trip.note ?? "");
 
-    const itineraryRaw = await generateItinerary({
-      destination: trip.destination,
-      startDate: toYmd(trip.start_date),
-      endDate: toYmd(trip.end_date),
+    const validated = await generateValidatedAiItinerary({
+      trip,
       preferences: effectivePreferencesList.join(", "),
-      description: trip.description ?? "",
-      note: transientNote,
+      transientNote,
     });
-
-    const validated = aiItinerarySchema.parse(itineraryRaw);
-    validateGeneratedItineraryAgainstTrip(validated, trip);
 
     await connection.beginTransaction();
     transactionActive = true;
@@ -694,10 +1198,11 @@ export async function generateAiTripItinerary(req, res) {
       );
       const dayId = dayResult.insertId;
 
+      const dayDestination = getTripDestinationForDay(trip, day.dayNumber);
       for (let i = 0; i < day.pois.length; i += 1) {
         await upsertAiPoiForDay(connection, {
           tripId,
-          destination: trip.destination,
+          destination: dayDestination,
           dayNumber: day.dayNumber,
           dayId,
           poi: day.pois[i],
@@ -805,17 +1310,19 @@ export async function generateAiTripItineraryStream(req, res) {
       : (trip.note ?? "");
 
     sendEvent("stage", { step: "ai_generating" });
-    const itineraryRaw = await generateItinerary({
-      destination: trip.destination,
-      startDate: toYmd(trip.start_date),
-      endDate: toYmd(trip.end_date),
+    const validated = await generateValidatedAiItinerary({
+      trip,
       preferences: effectivePreferencesList.join(", "),
-      description: trip.description ?? "",
-      note: transientNote,
+      transientNote,
+      onRetry: ({ attempt, maxAttempts, reason }) => {
+        sendEvent("stage", {
+          step: "ai_format_retry",
+          attempt,
+          maxAttempts,
+          reason,
+        });
+      },
     });
-
-    const validated = aiItinerarySchema.parse(itineraryRaw);
-    validateGeneratedItineraryAgainstTrip(validated, trip);
 
     await connection.beginTransaction();
     transactionActive = true;
@@ -858,11 +1365,12 @@ export async function generateAiTripItineraryStream(req, res) {
         totalPois: day.pois.length,
       });
 
+      const dayDestination = getTripDestinationForDay(trip, day.dayNumber);
       for (let i = 0; i < day.pois.length; i += 1) {
         const poi = day.pois[i];
         await upsertAiPoiForDay(connection, {
           tripId,
-          destination: trip.destination,
+          destination: dayDestination,
           dayNumber: day.dayNumber,
           dayId,
           poi,
@@ -986,7 +1494,8 @@ export async function generateAiTripDay(req, res) {
       userRequest,
     });
 
-    const generatedDay = aiDaySchema.parse(generatedRaw);
+    const generatedDay = removeTransportOnlyPoisFromDay(aiDaySchema.parse(generatedRaw));
+    assertGeneratedDayHasEnoughPois(generatedDay);
     if (generatedDay.dayNumber !== dayNumber) {
       return res.status(422).json({ error: `AI returned dayNumber=${generatedDay.dayNumber}, expected ${dayNumber}` });
     }
@@ -1014,7 +1523,7 @@ export async function generateAiTripDay(req, res) {
     for (let i = 0; i < generatedDay.pois.length; i += 1) {
       await upsertAiPoiForDay(connection, {
         tripId,
-        destination: trip.destination,
+        destination: getTripDestinationForDay(trip, dayNumber),
         dayNumber,
         dayId,
         poi: generatedDay.pois[i],
@@ -1280,7 +1789,9 @@ export async function getTripDetailStructured(req, res) {
         p.description,
         p.image_url,
         p.lat,
-        p.lng
+        p.lng,
+        p.google_place_id,
+        p.google_place_cache_json
       FROM itinerary_days d
       LEFT JOIN day_poi dp ON dp.day_id = d.day_id
       LEFT JOIN pois p ON p.poi_id = dp.poi_id
@@ -1291,7 +1802,7 @@ export async function getTripDetailStructured(req, res) {
     );
 
     const tripRow = tripRows[0];
-    await backfillMissingTripPoiCoordinates(rows, tripRow.destination, tripId);
+    await backfillMissingTripPoiCoordinates(rows, tripRow.destination, tripId, tripRow);
 
     const trip = {
       trip_id: tripRow.trip_id,
@@ -1323,6 +1834,7 @@ export async function getTripDetailStructured(req, res) {
       }
 
       if (row.day_poi_id == null || row.poi_id == null) continue;
+      const coords = getBestPoiCoordinates(row);
 
       day.pois.push({
         day_poi_id: row.day_poi_id,
@@ -1337,8 +1849,9 @@ export async function getTripDetailStructured(req, res) {
         transport_mode_override: row.transport_mode_override ?? null,
         start_time: row.start_time ?? null,
         duration_min: row.duration_min ?? null,
-        lat: row.lat ?? null,
-        lng: row.lng ?? null,
+        lat: coords.lat,
+        lng: coords.lng,
+        google_place_id: row.google_place_id ?? null,
       });
     }
 

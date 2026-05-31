@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import PoiDetailPanel from "../components/PoiDetailPanel";
@@ -804,6 +804,98 @@ export default function TripDetailPage() {
     return paddedDays;
   }, [detail, tripDayCount]);
 
+  const cityStaySchedule = useMemo(() => {
+    const note = String(trip?.note || "");
+    const markerIndex = note.indexOf("City stay dates:");
+    if (markerIndex < 0) return [];
+
+    const section = note
+      .slice(markerIndex + "City stay dates:".length)
+      .split(/\n\s*\n/)[0]
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    return section
+      .map((line) => {
+        const match = line.match(/^-\s*(.+?):\s*(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/);
+        if (!match) return null;
+        return {
+          city: match[1].trim(),
+          startDate: match[2],
+          endDate: match[3],
+        };
+      })
+      .filter(Boolean);
+  }, [trip?.note]);
+
+  const destinationCityOptions = useMemo(() => {
+    return String(trip?.destination || "")
+      .split(/\s*(?:\/|\||;|->)\s*/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }, [trip?.destination]);
+
+  const inferDayCityFromPois = useCallback((day) => {
+    if (!destinationCityOptions.length || !Array.isArray(day?.pois)) return "";
+    const scores = new Map(destinationCityOptions.map((city) => [city, 0]));
+
+    for (const poi of day.pois) {
+      const text = `${poi?.name || ""} ${poi?.address || ""}`.toLowerCase();
+      for (const city of destinationCityOptions) {
+        const cityLower = city.toLowerCase();
+        const simpleCity = cityLower.split(",")[0].trim();
+        const parenthetical = cityLower.match(/\(([^)]+)\)/)?.[1]?.trim();
+        const withoutParenthetical = cityLower.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+        const aliases = [
+          cityLower,
+          simpleCity,
+          withoutParenthetical,
+          parenthetical,
+          cityLower.includes("kuala lumpur") ? "kl" : "",
+          cityLower.includes("penang") ? "penang" : "",
+          cityLower.includes("george town") || cityLower.includes("georgetown") ? "george town" : "",
+          cityLower.includes("george town") || cityLower.includes("georgetown") ? "georgetown" : "",
+        ].filter(Boolean);
+        const hit = aliases.some((alias) => alias && text.includes(alias));
+        if (hit) scores.set(city, (scores.get(city) || 0) + 1);
+      }
+    }
+
+    const best = Array.from(scores.entries()).sort((a, b) => b[1] - a[1])[0];
+    return best?.[1] > 0 ? best[0] : "";
+  }, [destinationCityOptions]);
+
+  const dayCityByNumber = useMemo(() => {
+    const byNumber = new Map();
+    const startDate = String(trip?.start_date || "").slice(0, 10);
+    if (!startDate) return byNumber;
+
+    for (const day of sortedDays) {
+      const dayNumber = Number(day?.day_number);
+      if (!Number.isFinite(dayNumber)) continue;
+      let city = "";
+
+      const inferredCity = inferDayCityFromPois(day);
+
+      if (inferredCity) {
+        city = inferredCity;
+      } else if (cityStaySchedule.length) {
+        const date = new Date(`${startDate}T00:00:00`);
+        if (!Number.isNaN(date.getTime())) {
+          date.setDate(date.getDate() + Math.max(0, dayNumber - 1));
+          const ymd = date.toISOString().slice(0, 10);
+          const stay = cityStaySchedule.find((item) => ymd >= item.startDate && ymd <= item.endDate);
+          city = stay?.city || "";
+        }
+      }
+
+      if (city) byNumber.set(dayNumber, city);
+    }
+
+    return byNumber;
+  }, [cityStaySchedule, inferDayCityFromPois, sortedDays, trip?.start_date]);
+
   const tripWeatherCoords = useMemo(() => getTripWeatherCoords(sortedDays), [sortedDays]);
 
   useEffect(() => {
@@ -1241,16 +1333,74 @@ export default function TripDetailPage() {
     return Object.fromEntries(entries);
   }, [sortedDays]);
 
+  const getResolvedPoiCoordinates = useCallback((poi) => {
+    const poiId = Number(poi?.poi_id);
+    const cachedDetails = Number.isInteger(poiId) && poiId > 0 ? poiPlaceDetailsCacheByPoiId[poiId] : null;
+    const candidates = [
+      cachedDetails?.google_place?.location,
+      cachedDetails?.poi,
+      poi,
+    ];
+
+    for (const candidate of candidates) {
+      const lat = Number(candidate?.lat);
+      const lng = Number(candidate?.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng) && isLikelyMalaysiaCoordinates(lat, lng)) {
+        return { lat, lng };
+      }
+    }
+
+    return null;
+  }, [poiPlaceDetailsCacheByPoiId]);
+
+  const applyPoiDetailCoordinates = useCallback((poiId, payload) => {
+    const safePoiId = Number(poiId);
+    if (!Number.isInteger(safePoiId) || safePoiId <= 0 || !payload) return;
+
+    const candidates = [
+      payload?.google_place?.location,
+      payload?.poi,
+    ];
+    const coords = candidates
+      .map((candidate) => ({ lat: Number(candidate?.lat), lng: Number(candidate?.lng) }))
+      .find((candidate) =>
+        Number.isFinite(candidate.lat) &&
+        Number.isFinite(candidate.lng) &&
+        isLikelyMalaysiaCoordinates(candidate.lat, candidate.lng)
+      );
+    if (!coords) return;
+
+    setDetail((prev) => {
+      if (!prev?.days?.length) return prev;
+      return {
+        ...prev,
+        days: prev.days.map((day) => ({
+          ...day,
+          pois: (day.pois || []).map((item) =>
+            Number(item?.poi_id) === safePoiId
+              ? { ...item, lat: coords.lat, lng: coords.lng }
+              : item
+          ),
+        })),
+      };
+    });
+
+    setSelectedPoiDetailTarget((prev) =>
+      Number(prev?.poi?.poi_id) === safePoiId
+        ? { ...prev, poi: { ...(prev.poi || {}), lat: coords.lat, lng: coords.lng } }
+        : prev
+    );
+  }, []);
+
   const mapPoints = useMemo(() => {
     return visibleDays.flatMap((day) =>
       (day.pois || [])
         .map((poi) => {
-          const lat = Number(poi.lat);
-          const lng = Number(poi.lng);
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+          const coords = getResolvedPoiCoordinates(poi);
+          if (!coords) return null;
           return {
-            lat,
-            lng,
+            lat: coords.lat,
+            lng: coords.lng,
             name: poi.name || "Unnamed POI",
             poiId: poi.poi_id ?? null,
             dayNumber: day.day_number,
@@ -1261,24 +1411,24 @@ export default function TripDetailPage() {
             type: poi.type ?? "other",
             description: poi.description ?? "",
             image_url: poi.image_url || poiImageUrls[getPoiImageCacheKey(poi)] || null,
+            placeId: poi.google_place_id || null,
             color: dayColorById[String(day.day_id)] || ROUTE_COLORS[0],
           };
         })
         .filter(Boolean)
     );
-  }, [visibleDays, dayColorById, poiImageUrls]);
+  }, [visibleDays, dayColorById, poiImageUrls, getResolvedPoiCoordinates]);
 
   const routeGroups = useMemo(() => {
     return visibleDays
       .map((day) => {
         const points = (day.pois || [])
           .map((poi) => {
-            const lat = Number(poi.lat);
-            const lng = Number(poi.lng);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            const coords = getResolvedPoiCoordinates(poi);
+            if (!coords) return null;
             return {
-              lat,
-              lng,
+              lat: coords.lat,
+              lng: coords.lng,
               name: poi.name || "Unnamed POI",
               visitOrder: poi.visit_order,
               dayPoiId: poi.day_poi_id ?? null,
@@ -1294,7 +1444,7 @@ export default function TripDetailPage() {
         };
       })
       .filter((group) => group.points.length >= 2);
-  }, [visibleDays, dayColorById]);
+  }, [visibleDays, dayColorById, getResolvedPoiCoordinates]);
 
   const routeLegendItems = useMemo(() => {
     if (activeTab !== "overview") return [];
@@ -1315,6 +1465,7 @@ export default function TripDetailPage() {
       setPoiDetailData(cached);
       setPoiDetailError("");
       setPoiDetailLoading(false);
+      applyPoiDetailCoordinates(poiId, cached);
       return;
     }
 
@@ -1330,6 +1481,7 @@ export default function TripDetailPage() {
       if (poiDetailRequestSeqRef.current !== requestSeq) return;
       setPoiDetailData(payload);
       setPoiPlaceDetailsCacheByPoiId((prev) => ({ ...prev, [poiId]: payload }));
+      applyPoiDetailCoordinates(poiId, payload);
     } catch (err) {
       if (poiDetailRequestSeqRef.current !== requestSeq) return;
       if (axios.isAxiosError(err)) {
@@ -1513,6 +1665,7 @@ export default function TripDetailPage() {
               "types",
               "reviews",
               "editorial_summary",
+              "geometry",
               "formatted_address",
               "formatted_phone_number",
               "international_phone_number",
@@ -1737,6 +1890,7 @@ export default function TripDetailPage() {
           dayId: point.dayId ?? null,
           dayPoiId: point.dayPoiId ?? null,
           poiId: point.poiId ?? null,
+          placeId: point.placeId || null,
           poi: {
             poi_id: point.poiId ?? null,
             name: point.name || "Unnamed POI",
@@ -2728,6 +2882,9 @@ export default function TripDetailPage() {
             {visibleDays.length ? (
               visibleDays.map((day) => (
                 <section key={day.day_id} style={sectionCardStyle}>
+                  {(() => {
+                    const dayCityName = dayCityByNumber.get(Number(day.day_number)) || "";
+                    return (
                   <div
                     className="row"
                     style={{
@@ -2737,7 +2894,23 @@ export default function TripDetailPage() {
                       rowGap: isMobileLayout ? 8 : 0,
                     }}
                   >
-                    <div style={{ fontWeight: 700 }}>Day {day.day_number}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 700 }}>Day {day.day_number}</div>
+                      {dayCityName ? (
+                        <div
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            background: "rgba(14,165,233,0.08)",
+                            color: "#0369a1",
+                            fontSize: 12,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {dayCityName}
+                        </div>
+                      ) : null}
+                    </div>
                     <div
                       className="row"
                       style={{
@@ -2779,6 +2952,8 @@ export default function TripDetailPage() {
                       ) : null}
                     </div>
                   </div>
+                    );
+                  })()}
 
                   {!day.pois?.length ? (
                     <div className="muted">No POIs yet</div>

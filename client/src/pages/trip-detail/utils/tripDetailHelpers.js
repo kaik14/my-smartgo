@@ -443,6 +443,10 @@ export function normalizePlaceDetailsForPanel(place, rawDetails) {
     ? details.opening_hours.weekday_text.map((line) => String(line || "").trim()).filter(Boolean)
     : [];
   const imageUrl = getPlacePhotoUrl(details, 1200);
+  const rawLocation = details?.geometry?.location;
+  const detailLat = typeof rawLocation?.lat === "function" ? rawLocation.lat() : Number(rawLocation?.lat);
+  const detailLng = typeof rawLocation?.lng === "function" ? rawLocation.lng() : Number(rawLocation?.lng);
+  const hasDetailCoords = Number.isFinite(detailLat) && Number.isFinite(detailLng);
   return {
     poi: {
       poi_id: null,
@@ -451,11 +455,12 @@ export function normalizePlaceDetailsForPanel(place, rawDetails) {
       address: String(details?.formatted_address || place?.address || "").trim(),
       description: introText,
       image_url: imageUrl || null,
-      lat: Number(place?.lat),
-      lng: Number(place?.lng),
+      lat: hasDetailCoords ? detailLat : Number(place?.lat),
+      lng: hasDetailCoords ? detailLng : Number(place?.lng),
     },
     google_place: {
       place_id: String(details?.place_id || place?.placeId || "").trim() || null,
+      location: hasDetailCoords ? { lat: detailLat, lng: detailLng } : null,
       rating: Number.isFinite(Number(details?.rating)) ? Number(details.rating) : null,
       user_ratings_total: Number.isFinite(Number(details?.user_ratings_total)) ? Number(details.user_ratings_total) : null,
       primary_type_label: formatPrimaryTypeLabelLocal(place?.type),

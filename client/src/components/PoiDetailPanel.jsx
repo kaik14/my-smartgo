@@ -209,20 +209,23 @@ export default function PoiDetailPanel({
         setStreetViewStatus("available");
       };
 
-      if (hasCoords) {
+      const cleanupStreetView = () => {
+        active = false;
+        if (timeoutId) window.clearTimeout(timeoutId);
+        if (streetViewTimeoutRef.current) {
+          window.clearTimeout(streetViewTimeoutRef.current);
+          streetViewTimeoutRef.current = null;
+        }
+        if (streetViewRef.current) {
+          streetViewRef.current.setVisible(false);
+        }
+      };
+
+      const requestStoredCoords = () => {
+        if (!hasCoords) return false;
         service.getPanorama(requestByLocation({ lat, lng }), handlePanorama);
-        return () => {
-          active = false;
-          if (timeoutId) window.clearTimeout(timeoutId);
-          if (streetViewTimeoutRef.current) {
-            window.clearTimeout(streetViewTimeoutRef.current);
-            streetViewTimeoutRef.current = null;
-          }
-          if (streetViewRef.current) {
-            streetViewRef.current.setVisible(false);
-          }
-        };
-      }
+        return true;
+      };
 
       if (placeId && window.google?.maps?.places?.PlacesService) {
         const placesService =
@@ -233,6 +236,7 @@ export default function PoiDetailPanel({
         placesService.getDetails({ placeId, fields: ["geometry"] }, (place, status) => {
           if (!active) return;
           if (status !== window.google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location) {
+            if (requestStoredCoords()) return;
             const safeStatus = status ? String(status) : "UNKNOWN";
             setStreetViewStatus("unavailable");
             setStreetViewMessage(`Street View unavailable (${safeStatus})`);
@@ -244,23 +248,18 @@ export default function PoiDetailPanel({
             lng: typeof loc.lng === "function" ? loc.lng() : Number(loc.lng),
           };
           if (!Number.isFinite(location.lat) || !Number.isFinite(location.lng)) {
+            if (requestStoredCoords()) return;
             setStreetViewStatus("unavailable");
             setStreetViewMessage("Street View unavailable (no coords)");
             return;
           }
           service.getPanorama(requestByLocation(location), handlePanorama);
         });
-        return () => {
-          active = false;
-          if (timeoutId) window.clearTimeout(timeoutId);
-          if (streetViewTimeoutRef.current) {
-            window.clearTimeout(streetViewTimeoutRef.current);
-            streetViewTimeoutRef.current = null;
-          }
-          if (streetViewRef.current) {
-            streetViewRef.current.setVisible(false);
-          }
-        };
+        return cleanupStreetView;
+      }
+
+      if (requestStoredCoords()) {
+        return cleanupStreetView;
       }
 
       setStreetViewStatus("unavailable");

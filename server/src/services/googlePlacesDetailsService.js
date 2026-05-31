@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { isLikelyMalaysiaCoordinates } from "../utils/malaysiaGeo.js";
 
 const GOOGLE_PLACES_TEXTSEARCH_ENDPOINT = "https://maps.googleapis.com/maps/api/place/textsearch/json";
 const GOOGLE_PLACES_DETAILS_ENDPOINT = "https://maps.googleapis.com/maps/api/place/details/json";
@@ -407,6 +408,7 @@ async function fetchGooglePlaceDetails(placeId, apiKey) {
   try {
     return await requestGooglePlaceDetails(placeId, apiKey, [
       ...baseFields,
+      "geometry",
       "editorial_summary",
       "formatted_address",
       "formatted_phone_number",
@@ -422,6 +424,7 @@ async function fetchGooglePlaceDetails(placeId, apiKey) {
     if (!mightBeFieldCompatibilityIssue) throw error;
     return await requestGooglePlaceDetails(placeId, apiKey, [
       ...baseFields,
+      "geometry",
       "formatted_address",
       "formatted_phone_number",
       "international_phone_number",
@@ -437,6 +440,11 @@ function normalizeGooglePlaceDetails(details, poi) {
   const rating = Number(details.rating);
   const total = Number(details.user_ratings_total);
   const types = Array.isArray(details.types) ? details.types : [];
+  const lat = Number(details?.geometry?.location?.lat);
+  const lng = Number(details?.geometry?.location?.lng);
+  const location = Number.isFinite(lat) && Number.isFinite(lng) && isLikelyMalaysiaCoordinates(lat, lng)
+    ? { lat, lng }
+    : null;
   const editorialSummary = typeof details?.editorial_summary?.overview === "string"
     ? details.editorial_summary.overview.trim()
     : "";
@@ -446,6 +454,7 @@ function normalizeGooglePlaceDetails(details, poi) {
 
   return {
     place_id: String(details.place_id || "").trim() || String(poi?.google_place_id || "").trim() || null,
+    location,
     rating: Number.isFinite(rating) ? rating : null,
     user_ratings_total: Number.isFinite(total) ? total : null,
     primary_type_label: formatTypeLabel(poi?.type || types[0] || "other"),
@@ -485,7 +494,24 @@ async function persistGooglePlaceCache(poiId, normalized) {
   );
 }
 
+function getNormalizedPlaceLocation(googlePlace) {
+  const lat = Number(googlePlace?.location?.lat);
+  const lng = Number(googlePlace?.location?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (!isLikelyMalaysiaCoordinates(lat, lng)) return null;
+  return { lat, lng };
+}
+
+async function persistGooglePlaceCoordinates(poiId, coords) {
+  if (!poiId || !coords) return;
+  await pool.query(
+    "UPDATE pois SET lat = ?, lng = ? WHERE poi_id = ?",
+    [coords.lat, coords.lng, poiId]
+  );
+}
+
 function buildResponse({ poi, googlePlace, cached, cachedAt }) {
+  const googleCoords = getNormalizedPlaceLocation(googlePlace);
   return {
     poi: {
       poi_id: poi.poi_id,
@@ -494,8 +520,8 @@ function buildResponse({ poi, googlePlace, cached, cachedAt }) {
       address: poi.address ?? "",
       description: poi.description ?? "",
       image_url: poi.image_url ?? null,
-      lat: poi.lat ?? null,
-      lng: poi.lng ?? null,
+      lat: googleCoords?.lat ?? poi.lat ?? null,
+      lng: googleCoords?.lng ?? poi.lng ?? null,
     },
     google_place: googlePlace,
     source: {
@@ -507,11 +533,11 @@ function buildResponse({ poi, googlePlace, cached, cachedAt }) {
 }
 
 export async function getPoiPlaceDetailsWithCache(poiRow) {
-  const poi = poiRow || {};
+  const poi = { ...(poiRow || {}) };
   const cachedPayload = safeJsonParse(poi.google_place_cache_json);
   const cachedAt = poi.google_place_cache_updated_at;
 
-  if (cachedPayload && isCacheFresh(cachedAt)) {
+  if (cachedPayload && isCacheFresh(cachedAt) && getNormalizedPlaceLocation(cachedPayload)) {
     return buildResponse({
       poi,
       googlePlace: cachedPayload,
@@ -568,12 +594,20 @@ export async function getPoiPlaceDetailsWithCache(poiRow) {
     const details = await fetchGooglePlaceDetails(placeId, apiKey);
     const normalized = normalizeGooglePlaceDetails({ ...details, place_id: placeId }, poi) || {
       place_id: placeId,
+      location: null,
       rating: null,
       user_ratings_total: null,
       primary_type_label: formatTypeLabel(poi.type || "other"),
       introduction: "",
       reviews: { positive: [], negative: [] },
     };
+
+    const detailsCoords = getNormalizedPlaceLocation(normalized);
+    if (detailsCoords) {
+      await persistGooglePlaceCoordinates(poi.poi_id, detailsCoords);
+      poi.lat = detailsCoords.lat;
+      poi.lng = detailsCoords.lng;
+    }
 
     await persistGooglePlaceCache(poi.poi_id, normalized);
     return buildResponse({

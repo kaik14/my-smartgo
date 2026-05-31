@@ -23,8 +23,12 @@ Requirements:
 - Trip weather:
 ${weatherSummary || "Weather unavailable"}
 - The number of days MUST equal the inclusive date range from start to end.
-- Each day must contain 3 to 6 POIs.
+- Each day must contain 5 to 6 POIs.
+- For trips with 2+ days, vary the day density: include at least one 4-POI day and at least one 5-POI day. Do not generate exactly 4 POIs for every day.
+- Use 5 POIs on lighter, compact city days; use 4 POIs on heavier or longer-distance days.
 - Prefer places in Malaysia.
+- For multi-city trips, use the Trip note's "City stay dates" as the source of truth: each day should contain POIs in that day's city only.
+- Do not include airports, train stations, bus terminals, ferry terminals, transport hubs, hotel check-ins, or transfer-only stops as POIs.
 - Avoid duplicate or near-duplicate POIs across different days.
 - Treat places in the same complex / landmark area as ONE visit block on the SAME day when possible (example: Petronas Twin Towers, Suria KLCC, KLCC Park).
 - Do NOT split the same landmark complex across multiple days unless the user explicitly asks for repeat visits.
@@ -102,6 +106,60 @@ Instructions:
 `.trim();
 }
 
+function extractFirstJsonValue(raw) {
+  const text = String(raw || "").trim();
+  const firstObject = text.indexOf("{");
+  const firstArray = text.indexOf("[");
+  let start = -1;
+  let openChar = "";
+  let closeChar = "";
+
+  if (firstObject >= 0 && (firstArray < 0 || firstObject < firstArray)) {
+    start = firstObject;
+    openChar = "{";
+    closeChar = "}";
+  } else if (firstArray >= 0) {
+    start = firstArray;
+    openChar = "[";
+    closeChar = "]";
+  }
+
+  if (start < 0) return "";
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === openChar) {
+      depth += 1;
+    } else if (char === closeChar) {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+
+  return "";
+}
+
 function parseModelJson(text) {
   const raw = String(text || "").trim();
   if (!raw) {
@@ -114,11 +172,16 @@ function parseModelJson(text) {
     .replace(/\s*```$/i, "")
     .trim();
 
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    throw new Error("Gemini returned non-JSON content");
+  const candidates = [cleaned, extractFirstJsonValue(cleaned)].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try the next candidate below.
+    }
   }
+
+  throw new Error("Gemini returned non-JSON content");
 }
 
 function getErrorStatus(error) {
@@ -300,8 +363,10 @@ Requirements:
 - Return exactly one day object for dayNumber=${dayNumber}
 - Keep style consistent with the trip context
 - Respect the user's edit request for this day when possible
-- 3 to 6 POIs
+- 4 or 5 POIs; choose 5 when the day's places are close together and the pace is comfortable
 - Prefer places in Malaysia
+- For multi-city trips, use the Trip note's "City stay dates" as the source of truth: this day should contain POIs in that day's city only.
+- Do not include airports, train stations, bus terminals, ferry terminals, transport hubs, hotel check-ins, or transfer-only stops as POIs.
 - Avoid duplicates with places already present in other days of the itinerary summary
 - Treat same-complex / same-area POIs as one visit block on the same day when possible (e.g., Petronas Twin Towers + Suria KLCC + KLCC Park)
 - Do not add a POI that is essentially the same visit area as an existing POI on another day, unless the user explicitly requests a repeat visit
