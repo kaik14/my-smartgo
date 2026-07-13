@@ -23,6 +23,7 @@ export default function TripDetailOverviewPanels({
   tripWeatherLoading,
   tripWeatherError,
   tripWeatherDays,
+  weatherPending,
   formatTripWeatherDate,
   getWeatherCodeLabel,
 }) {
@@ -137,7 +138,10 @@ export default function TripDetailOverviewPanels({
         {!tripWeatherLoading && tripWeatherError ? (
           <div style={{ ...errorTextStyle, marginBottom: 8 }}>{tripWeatherError}</div>
         ) : null}
-        {!tripWeatherLoading && !tripWeatherError && !tripWeatherDays.length ? (
+        {!tripWeatherLoading && !tripWeatherError && weatherPending ? (
+          <div className="muted">Loading weather...</div>
+        ) : null}
+        {!tripWeatherLoading && !tripWeatherError && !weatherPending && !tripWeatherDays.length ? (
           <div className="muted">No weather data</div>
         ) : null}
         {!tripWeatherLoading && tripWeatherDays.length ? (

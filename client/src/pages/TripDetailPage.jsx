@@ -720,12 +720,10 @@ export default function TripDetailPage() {
 
     updateDockLayout();
     window.addEventListener("resize", updateDockLayout);
-    window.addEventListener("scroll", updateDockLayout, { passive: true });
     return () => {
       window.removeEventListener("resize", updateDockLayout);
-      window.removeEventListener("scroll", updateDockLayout);
     };
-  }, [rightDockOpen, viewportWidth, activeTab, detail, selectedPoiDetailTarget, poiDetailPanelOpen]);
+  }, [rightDockOpen, viewportWidth]);
 
   const fetchDetail = async ({ showPageLoading = true } = {}) => {
     try {
@@ -881,9 +879,11 @@ export default function TripDetailPage() {
       if (inferredCity) {
         city = inferredCity;
       } else if (cityStaySchedule.length) {
-        const date = new Date(`${startDate}T00:00:00`);
+        // Keep itinerary dates in calendar-day form. Converting local midnight to
+        // ISO previously moved the first day back one date in UTC+ timezones.
+        const date = new Date(`${startDate}T00:00:00Z`);
         if (!Number.isNaN(date.getTime())) {
-          date.setDate(date.getDate() + Math.max(0, dayNumber - 1));
+          date.setUTCDate(date.getUTCDate() + Math.max(0, dayNumber - 1));
           const ymd = date.toISOString().slice(0, 10);
           const stay = cityStaySchedule.find((item) => ymd >= item.startDate && ymd <= item.endDate);
           city = stay?.city || "";
@@ -911,7 +911,7 @@ export default function TripDetailPage() {
 
     if (!tripWeatherCoords) {
       setTripWeatherDays([]);
-      setTripWeatherError("Weather will appear after the trip is generated.");
+      setTripWeatherError("");
       setTripWeatherLoading(false);
       return;
     }
@@ -3232,6 +3232,7 @@ export default function TripDetailPage() {
               tripWeatherLoading={tripWeatherLoading}
               tripWeatherError={tripWeatherError}
               tripWeatherDays={tripWeatherDays}
+              weatherPending={!tripWeatherCoords}
               formatTripWeatherDate={formatTripWeatherDate}
               getWeatherCodeLabel={getWeatherCodeLabel}
             />
